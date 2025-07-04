@@ -237,6 +237,23 @@ class ProjectSetup:
         if not self._use_poetry:
             print(f"➡️  Run 'source {VENV}/bin/activate' to activate the virtual environment.")
 
+    def _setup_pip(self):
+        
+        print(f"🐍 Setting up Python virtual environment at {VENV}...")
+        try:
+            subprocess.run(["python3", "-m", "venv", VENV], check=True)
+            self._create_pip_conf()
+            subprocess.run([f"{VENV}/bin/pip", "install", "--upgrade", "pip"], check=True)
+
+            for req_file in self.get_list_of_requirements_files():
+                print(f"🔗 Installing packages from {req_file}...")
+                subprocess.run([f"{VENV}/bin/pip", "install", "-r", req_file, "--upgrade"], check=True)
+
+            print("🔗 Installing local package in editable mode...")
+            subprocess.run([f"{VENV}/bin/pip", "install", "-e", "."], check=True)
+        except subprocess.CalledProcessError as e:
+            print_error(f"pip setup failed: {e}")
+            sys.exit(1)
 
     def _create_pip_conf(self):
         if os.path.exists(f"{VENV}/pip.conf"):
