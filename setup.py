@@ -7,7 +7,7 @@ import configparser
 from pathlib import Path
 from shutil import which
 from typing import List
-
+import json
 
 VENV = ".venv"
 
@@ -34,10 +34,94 @@ def print_header(msg):
 
 
 class ProjectSetup:
+    CA_CONFIG = Path("setup.json")
+
     def __init__(self):
         self._use_poetry: bool = False
         self._package_name: str = ""
         self.__exit_notes: List[str] = []
+
+        self.ca_settings = {}
+        if self.CA_CONFIG.exists():
+            try:
+                self.ca_settings = json.loads(self.CA_CONFIG.read_text())
+                print_info(f"🔒 Loaded CodeArtifact settings from {self.CA_CONFIG}")
+            except json.JSONDecodeError:
+                print_error(f"Could not parse {self.CA_CONFIG}; ignoring it.")
+
+    def _maybe_setup_codeartifact(self)-> bool:
+        # if we've already got settings, ask to reuse
+        if self.ca_settings:
+            reuse = (
+                input("Reuse saved CodeArtifact settings? (Y/n): ").strip().lower()
+                or "y"
+            )
+            if reuse != "y":
+                self.ca_settings = {}
+
+        if not self.ca_settings:
+            ans = input("📦 Configure AWS CodeArtifact? (y/N): ").strip().lower()
+            if ans != "y":
+                return False
+            # prompt and store
+            self.ca_settings = {
+                "tool": input("   Tool (pip/poetry) [pip]: ").strip().lower() or "pip",
+                "domain": input("   Domain name: ").strip(),
+                "repository": input("   Repository name: ").strip(),
+                "region": input("   AWS region [us-east-1]: ").strip() or "us-east-1",
+                "profile": input("   AWS CLI profile (optional): ").strip() or None,
+            }
+            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+            print_success(f"Saved CodeArtifact settings to {self.CA_CONFIG}")
+
+        # build aws CLI command
+        if which("aws") is None:
+            print_error("AWS CLI not found; cannot configure CodeArtifact.")
+            sys.exit(1)
+
+        cmd = [
+            "aws",
+            "codeartifact",
+            "login",
+            "--tool",
+            self.ca_settings["tool"],
+            "--domain",
+            self.ca_settings["domain"],
+            "--repository",
+            self.ca_settings["repository"],
+            "--region",
+            self.ca_settings["region"],
+        ]
+        if self.ca_settings.get("profile"):
+            cmd += ["--profile", self.ca_settings["profile"]]
+
+        print_info(f"→ aws codeartifact login {' '.join(cmd[3:])}")
+        try:
+            # subprocess.run(cmd, check=True)
+            # ensure our virtualenv’s pip is picked up
+            env = os.environ.copy()
+            venv_bin = os.path.abspath(f"{VENV}/bin")
+            if os.path.isdir(venv_bin):
+                env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
+            subprocess.run(cmd, check=True, env=env)
+
+            print_success("CodeArtifact login succeeded.")
+            return True
+        except subprocess.CalledProcessError as e:
+            print_error(f"CodeArtifact login failed: {e}")
+            sys.exit(1)
+
+    def _run_with_ca_retry(self, func, *args, **kwargs):
+        """Run an install function, on auth failure re-login once."""
+        try:
+            return func(*args, **kwargs)
+        except subprocess.CalledProcessError as e:
+            # if "401" in str(e) or "Unauthorized" in str(e) or "No matching distribution found for" in str(e):
+            print_info("Detected auth or package not found error.")
+            if self._maybe_setup_codeartifact():
+                return func(*args, **kwargs)
+            else:
+                raise
 
     def _detect_platform(self):
         sysname = os.uname().sysname
@@ -264,17 +348,29 @@ class ProjectSetup:
                 [f"{VENV}/bin/pip", "install", "--upgrade", "pip"], check=True
             )
 
+            self._run_with_ca_retry(
+                subprocess.run,
+                [f"{VENV}/bin/pip", "install", "--upgrade", "pip"],
+                check=True,
+            )
+
             self._setup_requirements()
 
             for req_file in self.get_list_of_requirements_files():
                 print(f"🔗 Installing packages from {req_file}...")
-                subprocess.run(
+                self._run_with_ca_retry(
+                    subprocess.run,
                     [f"{VENV}/bin/pip", "install", "-r", req_file, "--upgrade"],
                     check=True,
                 )
 
             print("🔗 Installing local package in editable mode...")
-            subprocess.run([f"{VENV}/bin/pip", "install", "-e", "."], check=True)
+            self._run_with_ca_retry(
+                subprocess.run,
+                [f"{VENV}/bin/pip", "install", "-e", "."],
+                check=True,
+            )
+
         except subprocess.CalledProcessError as e:
             print_error(f"pip setup failed: {e}")
             sys.exit(1)
@@ -320,7 +416,9 @@ class ProjectSetup:
             print_success(result.stdout.strip())
 
             print("🔧 Creating virtual environment with Poetry...")
-            subprocess.run(["poetry", "install"], check=True)
+            self._run_with_ca_retry(subprocess.run, ["poetry", "install"], check=True)
+
+            # subprocess.run(["poetry", "install"], check=True)
         except subprocess.CalledProcessError as e:
             print_error(f"Poetry setup failed: {e}")
             sys.exit(1)
