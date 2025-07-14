@@ -196,36 +196,41 @@ class ProjectSetup:
             return False
 
     def _maybe_setup_artifactory(self) -> bool:
-        print_info("Artifactory login required, but no logic implemented. Please login manually.")
-        self.__exit_notes.append("Artifactory login required, but no logic implemented. Please login manually.")
+        msg = "Artifactory login required, but no logic implemented. Please login manually."
+        print_info(msg)
+        self.__exit_notes.append(msg)
         self._print_contribution_request()
         # Implement your Artifactory login logic here
         return False
 
     def _maybe_setup_nexus(self) -> bool:
-        print_info("Nexus login required, but no logic implemented. Please login manually.")
-        self.__exit_notes.append("Nexus login required, but no logic implemented. Please login manually.")
+        msg = "Nexus login required, but no logic implemented. Please login manually."
+        print_info(msg)
+        self.__exit_notes.append(msg)
         self._print_contribution_request()
-            # Implement your Nexus login logic here
+        # Implement your Nexus login logic here
         return False
 
     def _maybe_setup_github_packages(self) -> bool:
-        print_info("GitHub Packages login required, but no logic implemented. Please login manually.")
-        self.__exit_notes.append("GitHub Packages login required, but no logic implemented. Please login manually.")
+        msg = "GitHub Packages login required, but no logic implemented. Please login manually."
+        print_info(msg)
+        self.__exit_notes.append(msg)
         self._print_contribution_request()
         # Implement your GitHub Packages login logic here
         return False
 
     def _maybe_setup_azure_artifacts(self) -> bool:
-        print_info("Azure Artifacts login required, but no logic implemented. Please login manually.")
-        self.__exit_notes.append("Azure Artifacts login required, but no logic implemented. Please login manually.")
+        msg = "Azure Artifacts login required, but no logic implemented. Please login manually."
+        print_info(msg)
+        self.__exit_notes.append(msg)
         self._print_contribution_request()
         # Implement your Azure Artifacts login logic here
         return False
 
     def _maybe_setup_google_artifact_registry(self) -> bool:
-        print_info("Google Artifact Registry login required, but no logic implemented. Please login manually.")
-        self.__exit_notes.append("Google Artifact Registry login required, but no logic implemented. Please login manually.")
+        msg = "Google Artifact Registry login required, but no logic implemented. Please login manually."
+        print_info(msg)
+        self.__exit_notes.append(msg)
         self._print_contribution_request()
         # Implement your Google Artifact Registry login logic here
         return False
