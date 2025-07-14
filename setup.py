@@ -112,14 +112,43 @@ class ProjectSetup:
             sys.exit(1)
 
     def _run_with_ca_retry(self, func, *args, **kwargs):
-        """Run an install function, on auth failure re-login once."""
+        """Run an install function, on auth failure or 401 warning, re-login once."""
+        # Always capture output so we can inspect for warnings
+        if 'capture_output' not in kwargs and 'stdout' not in kwargs and 'stderr' not in kwargs:
+            kwargs['capture_output'] = True
+            kwargs['text'] = True
+
         try:
-            return func(*args, **kwargs)
+            result = func(*args, **kwargs)
+            # Check if result has stdout/stderr (for subprocess.run)
+            output = ''
+            if hasattr(result, 'stdout') and result.stdout:
+                output += result.stdout
+            if hasattr(result, 'stderr') and result.stderr:
+                output += result.stderr
+            if "WARNING: 401 Error, Credentials not correct for" in output:
+                print_info("Detected CodeArtifact 401 warning, attempting login...")
+                if self._maybe_setup_codeartifact():
+                    # Retry once after login
+                    result2 = func(*args, **kwargs)
+                    return result2
+                else:
+                    raise RuntimeError("CodeArtifact login failed after 401 warning.")
+            return result
         except subprocess.CalledProcessError as e:
-            # if "401" in str(e) or "Unauthorized" in str(e) or "No matching distribution found for" in str(e):
-            print_info("Detected auth or package not found error.")
-            if self._maybe_setup_codeartifact():
-                return func(*args, **kwargs)
+            error_output = str(e)
+            if hasattr(e, 'output') and e.output:
+                error_output += str(e.output)
+            if hasattr(e, 'stderr') and e.stderr:
+                error_output += str(e.stderr)
+            # Trap for 401 or Unauthorized or pip/poetry errors
+            if ("401" in error_output or "Unauthorized" in error_output or "No matching distribution found for" in error_output 
+                or "WARNING: 401 Error, Credentials not correct for" in error_output):
+                print_info("Detected auth or package not found error.")
+                if self._maybe_setup_codeartifact():
+                    return func(*args, **kwargs)
+                else:
+                    raise
             else:
                 raise
 
