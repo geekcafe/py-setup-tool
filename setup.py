@@ -111,8 +111,34 @@ class ProjectSetup:
             print_error(f"CodeArtifact login failed: {e}")
             sys.exit(1)
 
+    # Common authentication error patterns for popular code repositories
+    AUTH_ERROR_PATTERNS = [
+        "401",
+        "Unauthorized",
+        "403 Forbidden",
+        "No matching distribution found for",
+        "WARNING: 401 Error, Credentials not correct for",
+        "Artifactory returned HTTP 401",
+        "Invalid credentials",
+        "Unable to authenticate",
+        "Authentication failed",
+        "Bad credentials",
+        "The repository requires authentication",
+        "Nexus returned HTTP 401",
+        "The feed requires authentication",
+        "Authentication required"
+    ]
+
+    def _output_has_auth_error(self, output: str) -> bool:
+        """Return True if output contains any known auth error pattern."""
+        output_lower = output.lower()
+        for pattern in self.AUTH_ERROR_PATTERNS:
+            if pattern.lower() in output_lower:
+                return True
+        return False
+
     def _run_with_ca_retry(self, func, *args, **kwargs):
-        """Run an install function, on auth failure or 401 warning, re-login once."""
+        """Run an install function, on auth failure or known repo warning, re-login once."""
         # Always capture output so we can inspect for warnings
         if 'capture_output' not in kwargs and 'stdout' not in kwargs and 'stderr' not in kwargs:
             kwargs['capture_output'] = True
@@ -126,14 +152,14 @@ class ProjectSetup:
                 output += result.stdout
             if hasattr(result, 'stderr') and result.stderr:
                 output += result.stderr
-            if "WARNING: 401 Error, Credentials not correct for" in output:
-                print_info("Detected CodeArtifact 401 warning, attempting login...")
+            if self._output_has_auth_error(output):
+                print_info("Detected repository authentication warning, attempting login...")
                 if self._maybe_setup_codeartifact():
                     # Retry once after login
                     result2 = func(*args, **kwargs)
                     return result2
                 else:
-                    raise RuntimeError("CodeArtifact login failed after 401 warning.")
+                    raise RuntimeError("Repository login failed after authentication warning.")
             return result
         except subprocess.CalledProcessError as e:
             error_output = str(e)
@@ -141,10 +167,8 @@ class ProjectSetup:
                 error_output += str(e.output)
             if hasattr(e, 'stderr') and e.stderr:
                 error_output += str(e.stderr)
-            # Trap for 401 or Unauthorized or pip/poetry errors
-            if ("401" in error_output or "Unauthorized" in error_output or "No matching distribution found for" in error_output 
-                or "WARNING: 401 Error, Credentials not correct for" in error_output):
-                print_info("Detected auth or package not found error.")
+            if self._output_has_auth_error(error_output):
+                print_info("Detected repository authentication error.")
                 if self._maybe_setup_codeartifact():
                     return func(*args, **kwargs)
                 else:
