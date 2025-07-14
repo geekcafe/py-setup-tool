@@ -154,7 +154,7 @@ class ProjectSetup:
                 output += result.stderr
             if self._output_has_auth_error(output):
                 print_info("Detected repository authentication warning, attempting login...")
-                if self._maybe_setup_codeartifact():
+                if self._handle_repo_auth_error(output):
                     # Retry once after login
                     result2 = func(*args, **kwargs)
                     return result2
@@ -169,12 +169,72 @@ class ProjectSetup:
                 error_output += str(e.stderr)
             if self._output_has_auth_error(error_output):
                 print_info("Detected repository authentication error.")
-                if self._maybe_setup_codeartifact():
+                if self._handle_repo_auth_error(error_output):
                     return func(*args, **kwargs)
                 else:
                     raise
             else:
                 raise
+
+    def _handle_repo_auth_error(self, output: str) -> bool:
+        """Dispatch to the correct repository login/setup method based on output."""
+        out = output.lower()
+        if ".codeartifact" in out or "codeartifact" in out:
+            return self._maybe_setup_codeartifact()
+        elif "artifactory" in out:
+            return self._maybe_setup_artifactory()
+        elif "nexus" in out:
+            return self._maybe_setup_nexus()
+        elif "github.com" in out or "ghcr.io" in out or "github packages" in out:
+            return self._maybe_setup_github_packages()
+        elif "azure" in out or "pkgs.dev.azure.com" in out:
+            return self._maybe_setup_azure_artifacts()
+        elif "pkg.dev" in out or "artifact registry" in out or "gcp" in out:
+            return self._maybe_setup_google_artifact_registry()
+        else:
+            print_info("No known repository type detected in output; skipping custom login.")
+            return False
+
+    def _maybe_setup_artifactory(self) -> bool:
+        print_info("Artifactory login required, but no logic implemented. Please login manually.")
+        self.__exit_notes.append("Artifactory login required, but no logic implemented. Please login manually.")
+        self._print_contribution_request()
+        # Implement your Artifactory login logic here
+        return False
+
+    def _maybe_setup_nexus(self) -> bool:
+        print_info("Nexus login required, but no logic implemented. Please login manually.")
+        self.__exit_notes.append("Nexus login required, but no logic implemented. Please login manually.")
+        self._print_contribution_request()
+            # Implement your Nexus login logic here
+        return False
+
+    def _maybe_setup_github_packages(self) -> bool:
+        print_info("GitHub Packages login required, but no logic implemented. Please login manually.")
+        self.__exit_notes.append("GitHub Packages login required, but no logic implemented. Please login manually.")
+        self._print_contribution_request()
+        # Implement your GitHub Packages login logic here
+        return False
+
+    def _maybe_setup_azure_artifacts(self) -> bool:
+        print_info("Azure Artifacts login required, but no logic implemented. Please login manually.")
+        self.__exit_notes.append("Azure Artifacts login required, but no logic implemented. Please login manually.")
+        self._print_contribution_request()
+        # Implement your Azure Artifacts login logic here
+        return False
+
+    def _maybe_setup_google_artifact_registry(self) -> bool:
+        print_info("Google Artifact Registry login required, but no logic implemented. Please login manually.")
+        self.__exit_notes.append("Google Artifact Registry login required, but no logic implemented. Please login manually.")
+        self._print_contribution_request()
+        # Implement your Google Artifact Registry login logic here
+        return False
+
+    def _print_contribution_request(self):
+        
+        self.__exit_notes.append("Need any changes?")
+        self.__exit_notes.append("👉 Please open an issue at https://github.com/geekcafe/py-setup-tool/issues/new")
+        self.__exit_notes.append("👉 Or help us make it better by submitting a pull request.")
 
     def _detect_platform(self):
         sysname = os.uname().sysname
