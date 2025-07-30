@@ -8,6 +8,9 @@ from pathlib import Path
 from shutil import which
 from typing import List
 import json
+import threading
+import time
+import re
 
 VENV = ".venv"
 
@@ -456,37 +459,215 @@ class ProjectSetup:
                 f"➡️  Run 'source {VENV}/bin/activate' to activate the virtual environment."
             )
 
+    def _check_venv_path_integrity(self) -> bool:
+        """Check if the virtual environment has correct path references.
+        
+        Returns:
+            bool: True if venv is healthy or doesn't exist, False if corrupted
+        """
+        venv_path = Path(VENV)
+        if not venv_path.exists():
+            return True  # No venv exists, so no corruption possible
+            
+        # Check if the pip script exists and has correct shebang
+        pip_script = venv_path / "bin" / "pip"
+        if not pip_script.exists():
+            return True  # No pip script, let normal creation handle it
+            
+        try:
+            # Read the first line (shebang) of the pip script
+            with open(pip_script, 'r') as f:
+                shebang = f.readline().strip()
+                
+            # Extract the python path from shebang
+            if shebang.startswith('#!'):
+                python_path = shebang[2:]  # Remove #!
+                expected_path = str(Path.cwd() / VENV / "bin" / "python")
+                
+                # Check if the shebang points to the current directory structure
+                if python_path != expected_path:
+                    print_error(f"Virtual environment has incorrect path references:")
+                    print(f"   Expected: {expected_path}")
+                    print(f"   Found:    {python_path}")
+                    print("   This usually happens when the project directory was renamed or moved.")
+                    return False
+                    
+        except (IOError, OSError) as e:
+            print_error(f"Could not check virtual environment integrity: {e}")
+            return False
+            
+        return True
+
+    def _handle_corrupted_venv(self) -> bool:
+        """Handle a corrupted virtual environment by prompting user for action.
+        
+        Returns:
+            bool: True if user wants to recreate, False to abort
+        """
+        print("\n🔧 Virtual Environment Path Issue Detected")
+        print("=" * 45)
+        print("The virtual environment contains hardcoded paths that don't match")
+        print("the current project directory. This can happen when:")
+        print("  • The project directory was renamed")
+        print("  • The project was moved to a different location")
+        print("  • The virtual environment was copied from another location")
+        print()
+        
+        response = input("Would you like to remove the current virtual environment and recreate it? (Y/n): ").strip().lower()
+        if response in ('', 'y', 'yes'):
+            try:
+                import shutil
+                print(f"🗑️  Removing corrupted virtual environment at {VENV}...")
+                shutil.rmtree(VENV)
+                print_success(f"Removed {VENV}")
+                return True
+            except Exception as e:
+                print_error(f"Failed to remove {VENV}: {e}")
+                return False
+        else:
+            print("⚠️  Setup aborted. Please manually fix the virtual environment or remove it.")
+            return False
+
+    def _run_pip_with_progress(self, cmd: List[str], description: str) -> bool:
+        """Run a pip command with live progress indication and clean output.
+        
+        Args:
+            cmd: The pip command to run
+            description: Description of what's being installed
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        # Animation characters for spinner
+        spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        spinner_idx = 0
+        
+        # Start the process
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True
+        )
+        
+        # Track current package being installed
+        current_package = ""
+        packages_installed = []
+        last_line_length = 0  # Track length of last printed line
+        
+        # Print initial message
+        print(f"🔗 {description}")
+        
+        # Read output line by line
+        while True:
+            output = process.stdout.readline()
+            if output == '' and process.poll() is not None:
+                break
+                
+            if output:
+                # Extract package name from pip output
+                line = output.strip()
+                
+                # Look for "Collecting" or "Installing" patterns
+                if "Collecting" in line:
+                    match = re.search(r'Collecting ([^\s>=<]+)', line)
+                    if match:
+                        current_package = match.group(1)
+                elif "Installing collected packages:" in line:
+                    # Extract package names from the installation line
+                    packages_match = re.search(r'Installing collected packages: (.+)', line)
+                    if packages_match:
+                        packages_installed = [pkg.strip() for pkg in packages_match.group(1).split(',')]
+                elif "Successfully installed" in line:
+                    # Extract successfully installed packages
+                    success_match = re.search(r'Successfully installed (.+)', line)
+                    if success_match:
+                        packages_installed = [pkg.split('-')[0] for pkg in success_match.group(1).split()]
+                
+                # Show spinner with current package
+                if current_package:
+                    spinner = spinner_chars[spinner_idx % len(spinner_chars)]
+                    status_line = f"   {spinner} Installing {current_package}..."
+                    
+                    # Clear previous line completely
+                    if last_line_length > 0:
+                        print("\r" + " " * last_line_length + "\r", end='', flush=True)
+                    
+                    # Print new status line
+                    print(status_line, end='', flush=True)
+                    last_line_length = len(status_line)
+                    
+                    spinner_idx += 1
+                    time.sleep(0.1)
+        
+        # Wait for process to complete
+        return_code = process.wait()
+        
+        # Clear the spinner line completely
+        if last_line_length > 0:
+            print("\r" + " " * last_line_length + "\r", end='', flush=True)
+        
+        if return_code == 0:
+            if packages_installed:
+                package_list = ", ".join(packages_installed[:3])  # Show first 3 packages
+                if len(packages_installed) > 3:
+                    package_list += f" and {len(packages_installed) - 3} more"
+                print_success(f"Installed {package_list}")
+            else:
+                print_success(f"{description.replace('Installing packages from ', 'Installed packages from ')}")
+            return True
+        else:
+            print_error(f"Failed to install packages: {description}")
+            return False
+
+    def _run_pip_command_with_progress(self, pip_args: List[str], description: str):
+        """Wrapper to run pip commands with progress indication.
+        
+        Args:
+            pip_args: Arguments to pass to pip (without the pip executable)
+            description: Description of the operation
+        """
+        cmd = [f"{VENV}/bin/pip"] + pip_args
+        
+        if not self._run_pip_with_progress(cmd, description):
+            raise subprocess.CalledProcessError(1, cmd)
+
     def _setup_pip(self):
+        # Check for virtual environment path integrity issues
+        if not self._check_venv_path_integrity():
+            if not self._handle_corrupted_venv():
+                sys.exit(1)
 
         print(f"🐍 Setting up Python virtual environment at {VENV}...")
         try:
-            subprocess.run(["python3", "-m", "venv", VENV], check=True)
+            # Only create venv if it doesn't exist
+            if not Path(VENV).exists():
+                subprocess.run(["python3", "-m", "venv", VENV], check=True)
+            else:
+                print_info(f"Virtual environment {VENV} already exists")
             self._create_pip_conf()
-            subprocess.run(
-                [f"{VENV}/bin/pip", "install", "--upgrade", "pip"], check=True
-            )
-
-            self._run_with_ca_retry(
-                subprocess.run,
-                [f"{VENV}/bin/pip", "install", "--upgrade", "pip"],
-                check=True,
+            
+            # Upgrade pip with progress indication
+            self._run_pip_command_with_progress(
+                ["install", "--upgrade", "pip"],
+                "Upgrading pip"
             )
 
             self._setup_requirements()
 
+            # Install from requirements files with progress indication
             for req_file in self.get_list_of_requirements_files():
-                print(f"🔗 Installing packages from {req_file}...")
-                self._run_with_ca_retry(
-                    subprocess.run,
-                    [f"{VENV}/bin/pip", "install", "-r", req_file, "--upgrade"],
-                    check=True,
+                self._run_pip_command_with_progress(
+                    ["install", "-r", req_file, "--upgrade"],
+                    f"Installing packages from {req_file}"
                 )
 
-            print("🔗 Installing local package in editable mode...")
-            self._run_with_ca_retry(
-                subprocess.run,
-                [f"{VENV}/bin/pip", "install", "-e", "."],
-                check=True,
+            # Install local package in editable mode with progress indication
+            self._run_pip_command_with_progress(
+                ["install", "-e", "."],
+                "Installing local package in editable mode"
             )
 
         except subprocess.CalledProcessError as e:
