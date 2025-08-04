@@ -5,6 +5,7 @@ set -euo pipefail
 
 # Default mode: ask the user
 FETCH_LATEST="interactive"
+CI_MODE="no"
 
 usage() {
   cat <<EOF
@@ -24,7 +25,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -u|--update)      FETCH_LATEST="yes" ;;
     -n|--no-update)   FETCH_LATEST="no"  ;;
-    --ci)             FETCH_LATEST="yes" ;;
+    --ci)             FETCH_LATEST="yes"; CI_MODE="yes" ;;
     -h|--help)        usage ;;
     *)  echo "Unknown option: $1" >&2
         usage
@@ -52,4 +53,9 @@ if [[ "$FETCH_LATEST" == "yes" ]]; then
 fi
 
 # --- run the Python installer ---
-python3 setup.py
+if [[ "$CI_MODE" == "yes" ]]; then
+  echo "🤖 Running in CI/CD mode..."
+  python3 setup.py --ci
+else
+  python3 setup.py
+fi

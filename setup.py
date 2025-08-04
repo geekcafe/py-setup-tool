@@ -1,16 +1,27 @@
 import os
-import subprocess
 import sys
+import json
+import re
+import time
+import threading
+import subprocess
 import site
 import platform
 import configparser
+import argparse
 from pathlib import Path
 from shutil import which
-from typing import List
-import json
-import threading
-import time
-import re
+from typing import Dict, List, Any, Optional, Tuple, Union, Set
+
+# Import credential manager for secure repository authentication
+try:
+    from py_setup_tool import credential_manager
+    from py_setup_tool import input_helper
+except ImportError:
+    # For development mode when running directly
+    sys.path.append(str(Path(__file__).parent / "src"))
+    from py_setup_tool import credential_manager
+    from py_setup_tool import input_helper
 
 VENV = ".venv"
 
@@ -45,25 +56,14 @@ class ProjectSetup:
         "403 client error: forbidden",
         "authentication failed",
         "401 unauthorized",
-        "403 forbidden",
-        "invalid credentials",
-        "unable to authenticate",
-        "bad credentials",
-        "the repository requires authentication",
-        "warning: 401 error, credentials not correct for",
-        "artifactory returned http 401",
-        "nexus returned http 401",
-        "the feed requires authentication",
-        "authentication required"
+    ]
+    PACKAGE_NOT_FOUND_PATTERNS = [
+        "No matching distribution found for",
+        "Could not find a version that satisfies the requirement"
     ]
     
-    # Package not found error patterns
-    PACKAGE_NOT_FOUND_PATTERNS = [
-        "no matching distribution found for",
-        "could not find a version that satisfies the requirement",
-        "no such package",
-        "package not found"
-    ]
+    # Non-interactive mode flag
+    NON_INTERACTIVE = False
 
     def __init__(self):
         self._use_poetry: bool = False
@@ -104,12 +104,11 @@ class ProjectSetup:
                 print_error(f"Could not parse {self.CA_CONFIG}; ignoring it.")
 
     def _setup_repositories(self):
-        """Configure package repositories based on user input."""
+        """Set up package repositories based on user preferences."""
         print_header("Package Repository Setup")
-        print("Let's configure the package repositories you want to use.")
-        print("PyPI is enabled by default. You can add additional repositories.")
+        print("Setting up package repositories for pip...")
         
-        # Always ensure PyPI is in the repositories
+        # Always set up PyPI as the default repository
         if "repositories" not in self.ca_settings:
             self.ca_settings["repositories"] = {}
             
@@ -121,15 +120,24 @@ class ProjectSetup:
                 "trusted": True
             }
         
-        # Ask about each repository type
-        self._maybe_setup_codeartifact()
-        self._maybe_setup_artifactory()
-        self._maybe_setup_nexus()
-        self._maybe_setup_github_packages()
-        self._maybe_setup_azure_artifacts()
-        self._maybe_setup_google_artifact_registry()
+        # In non-interactive mode, we might skip asking about additional repositories
+        if not self.NON_INTERACTIVE:
+            print("\nAdditional repositories can help you access private packages.")
         
-        # Save the updated settings
+        # Check for Nexus repository
+        self._maybe_setup_nexus()
+        
+        # Check for CodeArtifact repository
+        self._maybe_setup_codeartifact()
+        
+        # Save settings
+        self._save_settings()
+        
+        if self.NON_INTERACTIVE:
+            print_info("Repository configuration completed in non-interactive mode")
+        else:
+            print_success("Repository configuration complete")
+        
         self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
         print_success(f"Repository configuration saved to {self.CA_CONFIG}")
         
@@ -190,15 +198,20 @@ class ProjectSetup:
             
         print_success(f"Updated pip.conf with repository configuration")
 
-    def _maybe_setup_codeartifact(self)-> bool:
+    def _maybe_setup_codeartifact(self) -> bool:
         """Configure AWS CodeArtifact repository."""
         # Check if CodeArtifact is already configured
         ca_repo = self.ca_settings.get("repositories", {}).get("codeartifact", {})
         
         if ca_repo:
             print_info("AWS CodeArtifact configuration found.")
-            reuse = input("Do you want to use AWS CodeArtifact? (Y/n): ").strip().lower() or "y"
-            if reuse != "y":
+            # In non-interactive mode, always use existing configuration
+            reuse = input_helper.yes_no_input(
+                "Do you want to use AWS CodeArtifact?", 
+                default=True, 
+                non_interactive=self.NON_INTERACTIVE
+            )
+            if not reuse:
                 # Disable the repository but keep the settings
                 ca_repo["enabled"] = False
                 self.ca_settings["repositories"]["codeartifact"] = ca_repo
@@ -207,29 +220,68 @@ class ProjectSetup:
                 # Enable the repository
                 ca_repo["enabled"] = True
                 self.ca_settings["repositories"]["codeartifact"] = ca_repo
+                # Load credentials from environment variables
+                ca_repo = credential_manager.get_repository_credentials("codeartifact", ca_repo)
         else:
             # Ask if user wants to configure CodeArtifact
-            ans = input("📦 Configure AWS CodeArtifact? (y/N): ").strip().lower()
-            if ans != "y":
+            # In non-interactive mode, skip CodeArtifact setup by default
+            use_ca = input_helper.yes_no_input(
+                "📦 Configure AWS CodeArtifact?", 
+                default=False, 
+                non_interactive=self.NON_INTERACTIVE
+            )
+            if not use_ca:
                 return False
                 
             # Initialize CodeArtifact repository settings
             ca_repo = {
                 "type": "codeartifact",
                 "enabled": True,
-                "tool": input("   Tool (pip/poetry) [pip]: ").strip().lower() or "pip",
-                "domain": input("   Domain name: ").strip(),
-                "repository": input("   Repository name: ").strip(),
-                "region": input("   AWS region [us-east-1]: ").strip() or "us-east-1",
-                "profile": input("   AWS CLI profile (optional): ").strip() or None,
-                "trusted": True
+                "domain": input_helper.safe_input(
+                    "   CodeArtifact domain: ",
+                    default="my-domain",
+                    non_interactive=self.NON_INTERACTIVE
+                ),
+                "domain_owner": input_helper.safe_input(
+                    "   Domain owner (AWS account ID, default is your account): ",
+                    default="",
+                    non_interactive=self.NON_INTERACTIVE
+                ) or None,
+                "repository": input_helper.safe_input(
+                    "   Repository name: ",
+                    default="my-repo",
+                    non_interactive=self.NON_INTERACTIVE
+                ),
+                "region": input_helper.safe_input(
+                    "   AWS region: ",
+                    default="us-east-1",
+                    non_interactive=self.NON_INTERACTIVE
+                ),
+                "aws_profile": input_helper.safe_input(
+                    "   AWS profile (optional): ",
+                    default="",
+                    non_interactive=self.NON_INTERACTIVE
+                ) or None,
+                "aws_access_key_id": input_helper.safe_input(
+                    "   AWS access key ID (optional): ",
+                    default="",
+                    non_interactive=self.NON_INTERACTIVE
+                ) or None,
+                "aws_secret_access_key": input_helper.safe_input(
+                    "   AWS secret access key (optional): ",
+                    default="",
+                    non_interactive=self.NON_INTERACTIVE
+                ) or None
             }
             
-            # Add to repositories
+            # Store sensitive credentials in .env file
+            credential_manager.save_repository_credentials("codeartifact", ca_repo)
+            
+            # Add to repositories (without sensitive data)
             if "repositories" not in self.ca_settings:
                 self.ca_settings["repositories"] = {}
             self.ca_settings["repositories"]["codeartifact"] = ca_repo
-
+        
         # If enabled, perform login
         if ca_repo.get("enabled", False):
             return self._login_to_codeartifact(ca_repo)
@@ -447,33 +499,65 @@ class ProjectSetup:
         
         if nexus_repo:
             print_info("Nexus configuration found.")
-            reuse = input("Do you want to use Nexus? (Y/n): ").strip().lower() or "y"
-            if reuse != "y":
+            # In non-interactive mode, always use existing configuration
+            reuse = input_helper.yes_no_input(
+                "Do you want to use Nexus?", 
+                default=True, 
+                non_interactive=self.NON_INTERACTIVE
+            )
+            if not reuse:
                 # Disable the repository but keep the settings
                 nexus_repo["enabled"] = False
                 self.ca_settings["repositories"]["nexus"] = nexus_repo
                 return False
             else:
-                # Enable the repository
+                # Enable the repository and load credentials
                 nexus_repo["enabled"] = True
                 self.ca_settings["repositories"]["nexus"] = nexus_repo
+                # Load credentials from environment variables
+                nexus_repo = credential_manager.get_repository_credentials("nexus", nexus_repo)
         else:
             # Ask if user wants to configure Nexus
-            ans = input("📦 Configure Sonatype Nexus? (y/N): ").strip().lower()
-            if ans != "y":
+            # In non-interactive mode, skip Nexus setup by default
+            use_nexus = input_helper.yes_no_input(
+                "📦 Configure Sonatype Nexus?", 
+                default=False, 
+                non_interactive=self.NON_INTERACTIVE
+            )
+            if not use_nexus:
                 return False
                 
             # Initialize Nexus repository settings
+            default_url = "https://nexus.example.com/repository/pypi/simple"
             nexus_repo = {
                 "type": "nexus",
                 "enabled": True,
-                "url": input("   Repository URL (e.g. https://nexus.example.com/repository/pypi/simple): ").strip(),
-                "username": input("   Username: ").strip(),
-                "password": input("   Password: ").strip(),
-                "trusted": input("   Trust this host? (Y/n): ").strip().lower() != "n"
+                "url": input_helper.safe_input(
+                    "   Repository URL (e.g. https://nexus.example.com/repository/pypi/simple): ",
+                    default=default_url,
+                    non_interactive=self.NON_INTERACTIVE
+                ),
+                "username": input_helper.safe_input(
+                    "   Username: ",
+                    default="nexus_user",
+                    non_interactive=self.NON_INTERACTIVE
+                ),
+                "password": input_helper.safe_input(
+                    "   Password: ",
+                    default="nexus_password",
+                    non_interactive=self.NON_INTERACTIVE
+                ),
+                "trusted": input_helper.yes_no_input(
+                    "   Trust this host?",
+                    default=True,
+                    non_interactive=self.NON_INTERACTIVE
+                )
             }
             
-            # Add to repositories
+            # Store sensitive credentials in .env file
+            credential_manager.save_repository_credentials("nexus", nexus_repo)
+            
+            # Add to repositories (without sensitive data)
             if "repositories" not in self.ca_settings:
                 self.ca_settings["repositories"] = {}
             self.ca_settings["repositories"]["nexus"] = nexus_repo
@@ -486,42 +570,46 @@ class ProjectSetup:
     def _login_to_nexus(self, nexus_repo):
         """Login to Nexus with the provided settings."""
         try:
-            # Create or update pip.conf with credentials
-            url = nexus_repo["url"]
-            username = nexus_repo["username"]
-            password = nexus_repo["password"]
+            # Ensure we have the latest credentials from environment variables
+            nexus_repo = credential_manager.get_repository_credentials("nexus", nexus_repo)
             
-            # Create .netrc file for authentication
-            netrc_path = os.path.expanduser("~/.netrc")
-            hostname = ""
+            # Get repository details
+            url = nexus_repo.get("url", "")
+            username = nexus_repo.get("username", "")
+            password = nexus_repo.get("password", "")
             
-            try:
-                from urllib.parse import urlparse
-                hostname = urlparse(url).netloc
-            except Exception:
-                hostname = url.split("/")[2] if url.startswith("http") else url
+            if not url:
+                print_error("Nexus URL is missing")
+                return False
             
-            if hostname:
-                # Check if entry already exists
-                existing_content = ""
-                if os.path.exists(netrc_path):
-                    with open(netrc_path, "r") as f:
-                        existing_content = f.read()
+            # Create pip.conf with credentials
+            pip_conf_path = Path.home() / ".pip" / "pip.conf"
+            pip_conf_path.parent.mkdir(exist_ok=True)
+            
+            config = configparser.ConfigParser()
+            if pip_conf_path.exists():
+                config.read(pip_conf_path)
                 
-                # Only add if not already present
-                if hostname not in existing_content:
-                    with open(netrc_path, "a") as f:
-                        f.write(f"\nmachine {hostname}\n")
-                        f.write(f"login {username}\n")
-                        f.write(f"password {password}\n")
-                    
-                    # Set permissions
-                    os.chmod(netrc_path, 0o600)
-                    print_success(f"Added Nexus credentials to ~/.netrc for {hostname}")
-                else:
-                    print_info(f"Credentials for {hostname} already exist in ~/.netrc")
-            
-            print_success("Nexus login configured.")
+            if "global" not in config:
+                config["global"] = {}
+                
+            # Add Nexus repository to pip.conf
+            config["global"]["index-url"] = f"{url}"
+            if username and password:
+                # Add credentials to URL
+                auth_url = url.replace("https://", f"https://{username}:{password}@")
+                config["global"]["index-url"] = auth_url
+                
+            # Add trusted-host if needed
+            if nexus_repo.get("trusted", False):
+                host = url.split("//")[1].split("/")[0]  # Extract hostname
+                config["global"]["trusted-host"] = host
+                
+            # Write config
+            with open(pip_conf_path, "w") as f:
+                config.write(f)
+                
+            print_success("Successfully configured Nexus repository")
             return True
         except Exception as e:
             print_error(f"Nexus login failed: {e}")
@@ -1040,35 +1128,6 @@ class ProjectSetup:
         """Handle a corrupted virtual environment by prompting user for action.
         
         Returns:
-            bool: True if user wants to recreate, False to abort
-        """
-        print("\n🔧 Virtual Environment Path Issue Detected")
-        print("=" * 45)
-        print("The virtual environment contains hardcoded paths that don't match")
-        print("the current project directory. This can happen when:")
-        print("  • The project directory was renamed")
-        print("  • The project was moved to a different location")
-        print("  • The virtual environment was copied from another location")
-        print()
-        
-        response = input("Would you like to remove the current virtual environment and recreate it? (Y/n): ").strip().lower()
-        if response in ('', 'y', 'yes'):
-            try:
-                import shutil
-                print(f"🗑️  Removing corrupted virtual environment at {VENV}...")
-                shutil.rmtree(VENV)
-                print_success(f"Removed {VENV}")
-                return True
-            except Exception as e:
-                print_error(f"Failed to remove {VENV}: {e}")
-                return False
-        else:
-            print("⚠️  Setup aborted. Please manually fix the virtual environment or remove it.")
-            return False
-
-    def _run_pip_with_progress(self, cmd: List[str], description: str) -> bool:
-        """Run a pip command with live progress indication and clean output.
-        
         Args:
             cmd: The pip command to run
             description: Description of what's being installed
@@ -1456,7 +1515,21 @@ break-system-packages = true
 
 
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Python project setup tool")
+    parser.add_argument("--ci", action="store_true", help="Run in CI/CD mode (non-interactive)")
+    parser.add_argument("--non-interactive", action="store_true", help="Run in non-interactive mode")
+    args = parser.parse_args()
+    
+    # Create ProjectSetup instance
     ps = ProjectSetup()
+    
+    # Set non-interactive mode if --ci or --non-interactive flag is present
+    if args.ci or args.non_interactive:
+        ProjectSetup.NON_INTERACTIVE = True
+        print_info("Running in non-interactive mode")
+    
+    # Run setup
     ps.setup()
 
 
