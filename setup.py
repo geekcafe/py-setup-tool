@@ -1174,8 +1174,34 @@ class ProjectSetup:
                     print_error(f"Package not found: {package_name}")
                     print_info("This appears to be a missing package error, not an authentication issue.")
                     print_info("Check that the package name is correct and available in the configured repositories.")
+                    
+                    # Ask if user wants to configure additional repositories
+                    setup_repos = input("Would you like to configure additional package repositories? (y/N): ").strip().lower()
+                    if setup_repos == "y":
+                        self._setup_repositories()
+                        print_info(f"Retrying installation of {package_name}...")
+                        # Retry the command after setting up repositories
+                        retry_result = execute_pip_command()
+                        return_code = retry_result["return_code"]
+                        packages_installed = retry_result["packages_installed"]
+                        full_output = retry_result["full_output"]
+                        
+                        # Process the retry result
+                        if return_code == 0:
+                            if packages_installed:
+                                package_list = ", ".join(packages_installed[:3])
+                                if len(packages_installed) > 3:
+                                    package_list += f" and {len(packages_installed) - 3} more"
+                                print_success(f"Successfully installed {package_list} after repository setup")
+                                return True
+                        else:
+                            print_error(f"Package {package_name} still not found after repository setup")
                 else:
                     print_error("Package not found error detected.")
+                    print_info("You may need to configure additional package repositories.")
+                    setup_repos = input("Would you like to configure additional package repositories? (y/N): ").strip().lower()
+                    if setup_repos == "y":
+                        self._setup_repositories()
                 return False
                 
             # Check for authentication errors
@@ -1294,6 +1320,11 @@ break-system-packages = true
                 self._store_python_interpreter_path()
             else:
                 print_info(f"Virtual environment {VENV} already exists")
+            
+            # Configure package repositories before installing packages
+            self._setup_repositories()
+            
+            # Create pip.conf with repository settings
             self._create_pip_conf()
             
             # Upgrade pip with progress indication
