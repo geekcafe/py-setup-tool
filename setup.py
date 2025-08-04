@@ -279,7 +279,7 @@ class ProjectSetup:
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
                     if "index-url" in line:
-                        url = line.split("=", 1)[1].strip()
+                        url = line.split("index-url", 1)[1].strip()
                         ca_repo["url"] = url
                         break
 
