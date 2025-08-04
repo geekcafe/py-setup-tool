@@ -11,17 +11,11 @@ import configparser
 import argparse
 from pathlib import Path
 from shutil import which
-from typing import Dict, List, Any, Optional, Tuple, Union, Set
+from typing import Dict, List, Any, Optional, Tuple, Union, Set, Callable
+from dotenv import load_dotenv, set_key
 
 # Import credential manager for secure repository authentication
-try:
-    from py_setup_tool import credential_manager
-    from py_setup_tool import input_helper
-except ImportError:
-    # For development mode when running directly
-    sys.path.append(str(Path(__file__).parent / "src"))
-    from py_setup_tool import credential_manager
-    from py_setup_tool import input_helper
+
 
 VENV = ".venv"
 
@@ -206,7 +200,7 @@ class ProjectSetup:
         if ca_repo:
             print_info("AWS CodeArtifact configuration found.")
             # In non-interactive mode, always use existing configuration
-            reuse = input_helper.yes_no_input(
+            reuse = yes_no_input(
                 "Do you want to use AWS CodeArtifact?", 
                 default=True, 
                 non_interactive=self.NON_INTERACTIVE
@@ -221,11 +215,11 @@ class ProjectSetup:
                 ca_repo["enabled"] = True
                 self.ca_settings["repositories"]["codeartifact"] = ca_repo
                 # Load credentials from environment variables
-                ca_repo = credential_manager.get_repository_credentials("codeartifact", ca_repo)
+                ca_repo = get_repository_credentials("codeartifact", ca_repo)
         else:
             # Ask if user wants to configure CodeArtifact
             # In non-interactive mode, skip CodeArtifact setup by default
-            use_ca = input_helper.yes_no_input(
+            use_ca = yes_no_input(
                 "📦 Configure AWS CodeArtifact?", 
                 default=False, 
                 non_interactive=self.NON_INTERACTIVE
@@ -237,37 +231,37 @@ class ProjectSetup:
             ca_repo = {
                 "type": "codeartifact",
                 "enabled": True,
-                "domain": input_helper.safe_input(
+                "domain": safe_input(
                     "   CodeArtifact domain: ",
                     default="my-domain",
                     non_interactive=self.NON_INTERACTIVE
                 ),
-                "domain_owner": input_helper.safe_input(
+                "domain_owner": safe_input(
                     "   Domain owner (AWS account ID, default is your account): ",
                     default="",
                     non_interactive=self.NON_INTERACTIVE
                 ) or None,
-                "repository": input_helper.safe_input(
+                "repository": safe_input(
                     "   Repository name: ",
                     default="my-repo",
                     non_interactive=self.NON_INTERACTIVE
                 ),
-                "region": input_helper.safe_input(
+                "region": safe_input(
                     "   AWS region: ",
                     default="us-east-1",
                     non_interactive=self.NON_INTERACTIVE
                 ),
-                "aws_profile": input_helper.safe_input(
+                "aws_profile": safe_input(
                     "   AWS profile (optional): ",
                     default="",
                     non_interactive=self.NON_INTERACTIVE
                 ) or None,
-                "aws_access_key_id": input_helper.safe_input(
+                "aws_access_key_id": safe_input(
                     "   AWS access key ID (optional): ",
                     default="",
                     non_interactive=self.NON_INTERACTIVE
                 ) or None,
-                "aws_secret_access_key": input_helper.safe_input(
+                "aws_secret_access_key": safe_input(
                     "   AWS secret access key (optional): ",
                     default="",
                     non_interactive=self.NON_INTERACTIVE
@@ -275,7 +269,7 @@ class ProjectSetup:
             }
             
             # Store sensitive credentials in .env file
-            credential_manager.save_repository_credentials("codeartifact", ca_repo)
+            save_repository_credentials("codeartifact", ca_repo)
             
             # Add to repositories (without sensitive data)
             if "repositories" not in self.ca_settings:
@@ -500,7 +494,7 @@ class ProjectSetup:
         if nexus_repo:
             print_info("Nexus configuration found.")
             # In non-interactive mode, always use existing configuration
-            reuse = input_helper.yes_no_input(
+            reuse = yes_no_input(
                 "Do you want to use Nexus?", 
                 default=True, 
                 non_interactive=self.NON_INTERACTIVE
@@ -515,11 +509,11 @@ class ProjectSetup:
                 nexus_repo["enabled"] = True
                 self.ca_settings["repositories"]["nexus"] = nexus_repo
                 # Load credentials from environment variables
-                nexus_repo = credential_manager.get_repository_credentials("nexus", nexus_repo)
+                nexus_repo = get_repository_credentials("nexus", nexus_repo)
         else:
             # Ask if user wants to configure Nexus
             # In non-interactive mode, skip Nexus setup by default
-            use_nexus = input_helper.yes_no_input(
+            use_nexus = yes_no_input(
                 "📦 Configure Sonatype Nexus?", 
                 default=False, 
                 non_interactive=self.NON_INTERACTIVE
@@ -532,22 +526,22 @@ class ProjectSetup:
             nexus_repo = {
                 "type": "nexus",
                 "enabled": True,
-                "url": input_helper.safe_input(
+                "url": safe_input(
                     "   Repository URL (e.g. https://nexus.example.com/repository/pypi/simple): ",
                     default=default_url,
                     non_interactive=self.NON_INTERACTIVE
                 ),
-                "username": input_helper.safe_input(
+                "username": safe_input(
                     "   Username: ",
                     default="nexus_user",
                     non_interactive=self.NON_INTERACTIVE
                 ),
-                "password": input_helper.safe_input(
+                "password": safe_input(
                     "   Password: ",
                     default="nexus_password",
                     non_interactive=self.NON_INTERACTIVE
                 ),
-                "trusted": input_helper.yes_no_input(
+                "trusted": yes_no_input(
                     "   Trust this host?",
                     default=True,
                     non_interactive=self.NON_INTERACTIVE
@@ -555,7 +549,7 @@ class ProjectSetup:
             }
             
             # Store sensitive credentials in .env file
-            credential_manager.save_repository_credentials("nexus", nexus_repo)
+            save_repository_credentials("nexus", nexus_repo)
             
             # Add to repositories (without sensitive data)
             if "repositories" not in self.ca_settings:
@@ -571,7 +565,7 @@ class ProjectSetup:
         """Login to Nexus with the provided settings."""
         try:
             # Ensure we have the latest credentials from environment variables
-            nexus_repo = credential_manager.get_repository_credentials("nexus", nexus_repo)
+            nexus_repo = get_repository_credentials("nexus", nexus_repo)
             
             # Get repository details
             url = nexus_repo.get("url", "")
@@ -1065,6 +1059,7 @@ class ProjectSetup:
             pkginfo
             hatchling
             moto
+            python-dotenv
         """
 
     def setup(self):
@@ -1512,6 +1507,180 @@ break-system-packages = true
 
     def is_virtual_environment(self):
         return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+
+
+# Constants
+ENV_FILE = Path.home() / ".env"
+REPO_PREFIX = "PY_SETUP_REPO_"
+
+
+def ensure_env_file_exists() -> None:
+    """Ensure the .env file directory exists and has proper permissions."""
+    env_dir = ENV_FILE.parent
+    if not env_dir.exists():
+        env_dir.mkdir(parents=True, exist_ok=True)
+        # Set directory permissions to 700 (rwx------)
+        os.chmod(env_dir, 0o700)
+    
+    # Create .env file if it doesn't exist
+    if not ENV_FILE.exists():
+        ENV_FILE.touch()
+        # Set file permissions to 600 (rw-------)
+        os.chmod(ENV_FILE, 0o600)
+
+
+def load_credentials() -> None:
+    """Load credentials from .env file."""
+    ensure_env_file_exists()
+    load_dotenv(ENV_FILE)
+
+
+def save_repository_credentials(repo_id: str, credentials: Dict[str, Any]) -> None:
+    """
+    Save repository credentials to .env file.
+    
+    Args:
+        repo_id: Repository identifier (e.g., 'nexus', 'codeartifact')
+        credentials: Dictionary containing sensitive credentials
+    """
+    ensure_env_file_exists()
+    
+    # Extract sensitive fields based on repository type
+    sensitive_fields = {
+        "nexus": ["username", "password", "url"],
+        "codeartifact": ["domain", "domain_owner", "repository"],
+        "artifactory": ["username", "password", "url"],
+        "azure_artifacts": ["organization", "project", "feed", "token"],
+        "google_artifact_registry": ["project_id", "location", "repository"]
+    }
+    
+    # Get the appropriate sensitive fields for this repo type
+    fields = sensitive_fields.get(credentials.get("type", ""), [])
+    
+    # Save each sensitive field to .env
+    for field in fields:
+        if field in credentials and credentials[field]:
+            env_var = f"{REPO_PREFIX}{repo_id.upper()}_{field.upper()}"
+            set_key(ENV_FILE, env_var, credentials[field])
+            
+            # Remove sensitive data from the credentials dict
+            credentials[field] = f"$ENV:{env_var}"
+
+
+def get_repository_credentials(repo_id: str, repo_config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Get repository credentials, resolving any environment variable references.
+    
+    Args:
+        repo_id: Repository identifier
+        repo_config: Repository configuration from setup.json
+        
+    Returns:
+        Dictionary with resolved credentials
+    """
+    load_credentials()
+    result = repo_config.copy()
+    
+    # Look for $ENV: references and resolve them
+    for key, value in repo_config.items():
+        if isinstance(value, str) and value.startswith("$ENV:"):
+            env_var = value[5:]  # Remove $ENV: prefix
+            result[key] = os.environ.get(env_var, "")
+            
+    return result
+
+
+def create_gitignore_entry() -> None:
+    """Ensure .env is in .gitignore."""
+    gitignore_path = Path.cwd() / ".gitignore"
+    
+    # Create .gitignore if it doesn't exist
+    if not gitignore_path.exists():
+        with open(gitignore_path, "w") as f:
+            f.write("# Python\n__pycache__/\n*.py[cod]\n*$py.class\n\n")
+    
+    # Check if .env is already in .gitignore
+    with open(gitignore_path, "r") as f:
+        content = f.read()
+    
+    # Add .env to .gitignore if not already present
+    if ".py_setup_tool/.env" not in content:
+        with open(gitignore_path, "a") as f:
+            f.write("\n# Sensitive environment variables\n~/.py_setup_tool/.env\n.py_setup_tool/.env\n")
+
+
+def safe_input(prompt: str, default: Any = "", condition: Optional[Callable[[str], bool]] = None,
+               non_interactive: bool = False) -> str:
+    """
+    Get user input with support for non-interactive mode.
+    
+    Args:
+        prompt: The prompt to display to the user
+        default: Default value to use in non-interactive mode
+        condition: Optional function to validate input
+        non_interactive: Whether to run in non-interactive mode
+        
+    Returns:
+        User input or default value in non-interactive mode
+    """
+    if non_interactive:
+        print(f"{prompt} [non-interactive, using default: {default}]")
+        return default
+    
+    while True:
+        user_input = input(prompt).strip()
+        
+        # Use default if input is empty
+        if not user_input and default:
+            return default
+            
+        # Validate input if condition is provided
+        if condition and user_input:
+            if condition(user_input):
+                return user_input
+            # If validation fails, continue the loop
+            continue
+            
+        return user_input
+
+
+def yes_no_input(prompt: str, default: bool = False, non_interactive: bool = False) -> bool:
+    """
+    Get yes/no input from the user with support for non-interactive mode.
+    
+    Args:
+        prompt: The prompt to display to the user
+        default: Default value to use in non-interactive mode
+        non_interactive: Whether to run in non-interactive mode
+        
+    Returns:
+        True for yes, False for no
+    """
+    if non_interactive:
+        print(f"{prompt} [non-interactive, using default: {'Y' if default else 'N'}]")
+        return default
+    
+    # Add Y/N hint based on default
+    if default:
+        prompt = f"{prompt} [Y/n]: "
+    else:
+        prompt = f"{prompt} [y/N]: "
+    
+    while True:
+        user_input = input(prompt).strip().lower()
+        
+        # Empty input uses default
+        if not user_input:
+            return default
+            
+        # Check for yes/no variations
+        if user_input in ('y', 'yes', 'true', '1'):
+            return True
+        elif user_input in ('n', 'no', 'false', '0'):
+            return False
+            
+        # Invalid input, ask again
+        print("Please answer with 'y' or 'n'")
 
 
 def main():
