@@ -1177,6 +1177,11 @@ class ProjectSetup:
         """
 
     def setup(self):
+        # Check for and fetch the latest setup.sh first
+        if self._check_and_fetch_setup_sh():
+            # If setup.sh was updated, exit and instruct the user to restart
+            sys.exit(0)
+            
         self._detect_platform()
         self._create_pyproject_toml()
         (self._setup_poetry if self._use_poetry else self._setup_pip)()
@@ -1564,6 +1569,116 @@ break-system-packages = true
 
         print_success("Created pip.conf with break-system-packages enabled")
             
+    def _check_and_fetch_setup_sh(self) -> bool:
+        """Check for and fetch the latest setup.sh from repository.
+        
+        Returns:
+            bool: True if setup.sh was updated, False otherwise
+        """
+        # Get the user's preference for updating setup.sh
+        update_preference = self._get_setup_sh_update_preference()
+        
+        if update_preference == "no":
+            print_info("Skipping setup.sh update check based on user preference.")
+            return False
+            
+        if update_preference == "interactive":
+            response = input("\nCheck for latest setup.sh from repository? [y/N]: ").strip().lower()
+            if response not in ('y', 'yes'):
+                return False
+        
+        print_info("Checking for latest setup.sh...")
+        
+        # URL for the latest setup.sh
+        setup_sh_url = "https://raw.githubusercontent.com/geekcafe/py-setup-tool/main/setup.sh"
+        
+        try:
+            # Fetch the latest setup.sh content
+            import urllib.request
+            with urllib.request.urlopen(setup_sh_url) as response:
+                latest_setup_sh = response.read().decode('utf-8')
+                
+            # Check if setup.sh exists locally
+            setup_sh_path = Path("setup.sh")
+            if setup_sh_path.exists():
+                # Compare with current setup.sh
+                with open(setup_sh_path, 'r', encoding='utf-8') as f:
+                    current_setup_sh = f.read()
+                    
+                if current_setup_sh == latest_setup_sh:
+                    print_info("setup.sh is already up to date.")
+                    return False
+                    
+                # Backup the current setup.sh
+                backup_path = Path("setup.sh.bak")
+                with open(backup_path, 'w', encoding='utf-8') as f:
+                    f.write(current_setup_sh)
+                print_info(f"Current setup.sh backed up to {backup_path}")
+            
+            # Write the latest setup.sh
+            with open(setup_sh_path, 'w', encoding='utf-8') as f:
+                f.write(latest_setup_sh)
+                
+            # Make it executable
+            import os
+            os.chmod(setup_sh_path, 0o755)
+            
+            print_success("setup.sh has been updated to the latest version.")
+            print("\n⚠️  Please restart the setup process by running:\n    ./setup.sh")
+            return True
+            
+        except Exception as e:
+            print_error(f"Failed to fetch or update setup.sh: {e}")
+            return False
+    
+    def _get_setup_sh_update_preference(self, force_prompt=False) -> str:
+        """Get the user's preference for pulling the latest setup.sh from repository.
+        
+        Args:
+            force_prompt: If True, prompt for preference even if already configured.
+                         If False, use existing preference without prompting.
+                         
+        Returns:
+            str: The setup.sh update preference ('yes', 'no', or 'interactive')
+        """
+        # Check if setup.sh update preference is already configured
+        update_preference = self.ca_settings.get("setup_sh_update_preference")
+        
+        if update_preference and not force_prompt:
+            # Use existing preference without prompting
+            print_info(f"Using stored setup.sh update preference: {update_preference}")
+            return update_preference
+        
+        # Prompt for setup.sh update preference
+        print("\n🔄 Setup.sh Update Preference")
+        print("=" * 45)
+        print("Choose how to handle setup.sh updates:")
+        print("  • yes        : Always check for the latest setup.sh from repository")
+        print("  • no         : Never check for updates to setup.sh")
+        print("  • interactive: Ask each time (default)")
+        print()
+        
+        while True:
+            response = input("Setup.sh update preference [interactive/yes/no]: ").strip().lower()
+            if response in ('', 'interactive'):
+                update_preference = 'interactive'
+                break
+            elif response in ('yes', 'y'):
+                update_preference = 'yes'
+                break
+            elif response in ('no', 'n'):
+                update_preference = 'no'
+                break
+            else:
+                print_error("Invalid choice. Please enter 'interactive', 'yes', or 'no'.")
+        
+        # Save the preference
+        self.ca_settings["setup_sh_update_preference"] = update_preference
+        self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+        print_success(f"Saved setup.sh update preference: {update_preference}")
+        
+        return update_preference
+    
     def _get_repo_update_preference(self, force_prompt=False) -> str:
         """Get the user's preference for pulling the latest setup.py from repository.
         
