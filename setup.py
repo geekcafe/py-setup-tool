@@ -125,8 +125,11 @@ class ProjectSetup:
                 "url": "https://pypi.org/simple",
                 "trusted": True
             }
+            # Save the updated settings with PyPI
+            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
         
         # Ask about each repository type
+        # Each method now saves its own configuration changes
         self._maybe_setup_codeartifact(force_prompt)
         self._maybe_setup_artifactory(force_prompt)
         self._maybe_setup_nexus(force_prompt)
@@ -134,12 +137,11 @@ class ProjectSetup:
         self._maybe_setup_azure_artifacts(force_prompt)
         self._maybe_setup_google_artifact_registry(force_prompt)
         
-        # Save the updated settings
-        self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
-        print_success(f"Repository configuration saved to {self.CA_CONFIG}")
-        
         # Update pip.conf with the repository configuration
+        # This uses the latest configuration from all repository setups
         self._update_pip_conf_with_repos()
+        print_success("Repository configuration complete.")
+
         
     def _update_pip_conf_with_repos(self):
         """Update pip.conf with the configured repositories."""
@@ -216,15 +218,31 @@ class ProjectSetup:
                 # Disable the repository but keep the settings
                 ca_repo["enabled"] = False
                 self.ca_settings["repositories"]["codeartifact"] = ca_repo
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("AWS CodeArtifact disabled and saved to configuration.")
                 return False
             else:
                 # Enable the repository
                 ca_repo["enabled"] = True
                 self.ca_settings["repositories"]["codeartifact"] = ca_repo
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("AWS CodeArtifact enabled and saved to configuration.")
         else:
             # Ask if user wants to configure CodeArtifact
             ans = input("☁️ Configure AWS CodeArtifact? (y/N): ").strip().lower()
             if ans != "y":
+                # Add a disabled entry to repositories
+                if "repositories" not in self.ca_settings:
+                    self.ca_settings["repositories"] = {}
+                self.ca_settings["repositories"]["codeartifact"] = {
+                    "type": "codeartifact",
+                    "enabled": False
+                }
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("AWS CodeArtifact disabled and saved to configuration.")
                 return False
                 
             # Initialize CodeArtifact repository settings
@@ -244,6 +262,9 @@ class ProjectSetup:
             if "repositories" not in self.ca_settings:
                 self.ca_settings["repositories"] = {}
             self.ca_settings["repositories"]["codeartifact"] = ca_repo
+            # Save the updated settings
+            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+            print_info("AWS CodeArtifact configuration saved.")
 
         # If enabled, perform login
         if ca_repo.get("enabled", False):
@@ -396,15 +417,31 @@ class ProjectSetup:
                 # Disable the repository but keep the settings
                 art_repo["enabled"] = False
                 self.ca_settings["repositories"]["artifactory"] = art_repo
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("Artifactory disabled and saved to configuration.")
                 return False
             else:
                 # Enable the repository
                 art_repo["enabled"] = True
                 self.ca_settings["repositories"]["artifactory"] = art_repo
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("Artifactory enabled and saved to configuration.")
         else:
             # No configuration exists, ask if user wants to configure Artifactory
             ans = input("📦 Configure JFrog Artifactory? (y/N): ").strip().lower()
             if ans != "y":
+                # Add a disabled entry to repositories
+                if "repositories" not in self.ca_settings:
+                    self.ca_settings["repositories"] = {}
+                self.ca_settings["repositories"]["artifactory"] = {
+                    "type": "artifactory",
+                    "enabled": False
+                }
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("Artifactory disabled and saved to configuration.")
                 return False
                 
             # Initialize Artifactory repository settings
@@ -421,6 +458,9 @@ class ProjectSetup:
             if "repositories" not in self.ca_settings:
                 self.ca_settings["repositories"] = {}
             self.ca_settings["repositories"]["artifactory"] = art_repo
+            # Save the updated settings
+            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+            print_info("Artifactory configuration saved.")
 
         # If enabled, perform login
         if art_repo.get("enabled", False):
@@ -492,15 +532,31 @@ class ProjectSetup:
                 # Disable the repository but keep the settings
                 nexus_repo["enabled"] = False
                 self.ca_settings["repositories"]["nexus"] = nexus_repo
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("Nexus disabled and saved to configuration.")
                 return False
             else:
                 # Enable the repository
                 nexus_repo["enabled"] = True
                 self.ca_settings["repositories"]["nexus"] = nexus_repo
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("Nexus enabled and saved to configuration.")
         else:
             # Ask if user wants to configure Nexus
             ans = input("🔄 Configure Sonatype Nexus? (y/N): ").strip().lower()
             if ans != "y":
+                # Add a disabled entry to repositories
+                if "repositories" not in self.ca_settings:
+                    self.ca_settings["repositories"] = {}
+                self.ca_settings["repositories"]["nexus"] = {
+                    "type": "nexus",
+                    "enabled": False
+                }
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("Nexus disabled and saved to configuration.")
                 return False
                 
             # Initialize Nexus repository settings
@@ -517,6 +573,9 @@ class ProjectSetup:
             if "repositories" not in self.ca_settings:
                 self.ca_settings["repositories"] = {}
             self.ca_settings["repositories"]["nexus"] = nexus_repo
+            # Save the updated settings
+            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+            print_info("Nexus configuration saved.")
 
         # If enabled, perform login
         if nexus_repo.get("enabled", False):
@@ -588,15 +647,31 @@ class ProjectSetup:
                 # Disable the repository but keep the settings
                 gh_repo["enabled"] = False
                 self.ca_settings["repositories"]["github"] = gh_repo
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("GitHub Packages disabled and saved to configuration.")
                 return False
             else:
                 # Enable the repository
                 gh_repo["enabled"] = True
                 self.ca_settings["repositories"]["github"] = gh_repo
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("GitHub Packages enabled and saved to configuration.")
         else:
             # Ask if user wants to configure GitHub Packages
             ans = input("🐙 Configure GitHub Packages? (y/N): ").strip().lower()
             if ans != "y":
+                # Add a disabled entry to repositories
+                if "repositories" not in self.ca_settings:
+                    self.ca_settings["repositories"] = {}
+                self.ca_settings["repositories"]["github"] = {
+                    "type": "github",
+                    "enabled": False
+                }
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("GitHub Packages disabled and saved to configuration.")
                 return False
                 
             # Initialize GitHub Packages repository settings
@@ -617,6 +692,9 @@ class ProjectSetup:
             if "repositories" not in self.ca_settings:
                 self.ca_settings["repositories"] = {}
             self.ca_settings["repositories"]["github"] = gh_repo
+            # Save the updated settings
+            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+            print_info("GitHub Packages configuration saved.")
 
         # If enabled, perform login
         if gh_repo.get("enabled", False):
@@ -688,15 +766,31 @@ class ProjectSetup:
                 # Disable the repository but keep the settings
                 azure_repo["enabled"] = False
                 self.ca_settings["repositories"]["azure"] = azure_repo
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("Azure Artifacts disabled and saved to configuration.")
                 return False
             else:
                 # Enable the repository
                 azure_repo["enabled"] = True
                 self.ca_settings["repositories"]["azure"] = azure_repo
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("Azure Artifacts enabled and saved to configuration.")
         else:
             # Ask if user wants to configure Azure Artifacts
             ans = input("☁️ Configure Azure Artifacts? (y/N): ").strip().lower()
             if ans != "y":
+                # Add a disabled entry to repositories
+                if "repositories" not in self.ca_settings:
+                    self.ca_settings["repositories"] = {}
+                self.ca_settings["repositories"]["azure"] = {
+                    "type": "azure",
+                    "enabled": False
+                }
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("Azure Artifacts disabled and saved to configuration.")
                 return False
                 
             # Initialize Azure Artifacts repository settings
@@ -718,6 +812,9 @@ class ProjectSetup:
             if "repositories" not in self.ca_settings:
                 self.ca_settings["repositories"] = {}
             self.ca_settings["repositories"]["azure"] = azure_repo
+            # Save the updated settings
+            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+            print_info("Azure Artifacts configuration saved.")
 
         # If enabled, perform login
         if azure_repo.get("enabled", False):
@@ -789,15 +886,31 @@ class ProjectSetup:
                 # Disable the repository but keep the settings
                 gcp_repo["enabled"] = False
                 self.ca_settings["repositories"]["google"] = gcp_repo
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("Google Artifact Registry disabled and saved to configuration.")
                 return False
             else:
                 # Enable the repository
                 gcp_repo["enabled"] = True
                 self.ca_settings["repositories"]["google"] = gcp_repo
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("Google Artifact Registry enabled and saved to configuration.")
         else:
             # Ask if user wants to configure Google Artifact Registry
             ans = input("☁️ Configure Google Artifact Registry? (y/N): ").strip().lower()
             if ans != "y":
+                # Add a disabled entry to repositories
+                if "repositories" not in self.ca_settings:
+                    self.ca_settings["repositories"] = {}
+                self.ca_settings["repositories"]["google"] = {
+                    "type": "google",
+                    "enabled": False
+                }
+                # Save the updated settings
+                self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                print_info("Google Artifact Registry disabled and saved to configuration.")
                 return False
                 
             # Initialize Google Artifact Registry repository settings
@@ -817,6 +930,9 @@ class ProjectSetup:
             if "repositories" not in self.ca_settings:
                 self.ca_settings["repositories"] = {}
             self.ca_settings["repositories"]["google"] = gcp_repo
+            # Save the updated settings
+            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+            print_info("Google Artifact Registry configuration saved.")
 
         # If enabled, perform login
         if gcp_repo.get("enabled", False):
