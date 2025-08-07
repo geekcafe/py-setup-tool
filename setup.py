@@ -103,8 +103,13 @@ class ProjectSetup:
             except json.JSONDecodeError:
                 print_error(f"Could not parse {self.CA_CONFIG}; ignoring it.")
 
-    def _setup_repositories(self):
-        """Configure package repositories based on user input."""
+    def _setup_repositories(self, force_prompt=False):
+        """Configure package repositories based on user input.
+        
+        Args:
+            force_prompt: If True, prompt for all repositories even if already configured.
+                         If False, only prompt for repositories that aren't configured yet.
+        """
         print_header("Package Repository Setup")
         print("Let's configure the package repositories you want to use.")
         print("PyPI is enabled by default. You can add additional repositories.")
@@ -122,12 +127,12 @@ class ProjectSetup:
             }
         
         # Ask about each repository type
-        self._maybe_setup_codeartifact()
-        self._maybe_setup_artifactory()
-        self._maybe_setup_nexus()
-        self._maybe_setup_github_packages()
-        self._maybe_setup_azure_artifacts()
-        self._maybe_setup_google_artifact_registry()
+        self._maybe_setup_codeartifact(force_prompt)
+        self._maybe_setup_artifactory(force_prompt)
+        self._maybe_setup_nexus(force_prompt)
+        self._maybe_setup_github_packages(force_prompt)
+        self._maybe_setup_azure_artifacts(force_prompt)
+        self._maybe_setup_google_artifact_registry(force_prompt)
         
         # Save the updated settings
         self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
@@ -190,12 +195,21 @@ class ProjectSetup:
             
         print_success(f"Updated pip.conf with repository configuration")
 
-    def _maybe_setup_codeartifact(self)-> bool:
-        """Configure AWS CodeArtifact repository."""
+    def _maybe_setup_codeartifact(self, force_prompt=False):
+        """Configure AWS CodeArtifact repository.
+        
+        Args:
+            force_prompt: If True, prompt for configuration even if already configured.
+                         If False, use existing configuration without prompting.
+        """
         # Check if CodeArtifact is already configured
         ca_repo = self.ca_settings.get("repositories", {}).get("codeartifact", {})
         
-        if ca_repo:
+        if ca_repo and not force_prompt:
+            # Use existing configuration without prompting
+            print_info("Using existing AWS CodeArtifact configuration.")
+            # Keep the enabled status as is
+        elif ca_repo:
             print_info("AWS CodeArtifact configuration found.")
             reuse = input("Do you want to use AWS CodeArtifact? (Y/n): ").strip().lower() or "y"
             if reuse != "y":
@@ -209,7 +223,7 @@ class ProjectSetup:
                 self.ca_settings["repositories"]["codeartifact"] = ca_repo
         else:
             # Ask if user wants to configure CodeArtifact
-            ans = input("📦 Configure AWS CodeArtifact? (y/N): ").strip().lower()
+            ans = input("☁️ Configure AWS CodeArtifact? (y/N): ").strip().lower()
             if ans != "y":
                 return False
                 
@@ -218,10 +232,11 @@ class ProjectSetup:
                 "type": "codeartifact",
                 "enabled": True,
                 "tool": input("   Tool (pip/poetry) [pip]: ").strip().lower() or "pip",
-                "domain": input("   Domain name: ").strip(),
-                "repository": input("   Repository name: ").strip(),
-                "region": input("   AWS region [us-east-1]: ").strip() or "us-east-1",
-                "profile": input("   AWS CLI profile (optional): ").strip() or None,
+                "domain": input("   Domain: ").strip(),
+                "domain_owner": input("   Domain Owner (AWS Account ID, or press Enter if same as current account): ").strip(),
+                "repository": input("   Repository Name: ").strip(),
+                "region": input("   AWS Region: ").strip() or "us-east-1",
+                "profile": input("   AWS Profile (optional): ").strip() or None,
                 "trusted": True
             }
             
@@ -248,9 +263,11 @@ class ProjectSetup:
             "codeartifact",
             "login",
             "--tool",
-            ca_repo["tool"],
+            "pip",
             "--domain",
             ca_repo["domain"],
+            "--domain-owner",
+            ca_repo["domain_owner"] or "self",
             "--repository",
             ca_repo["repository"],
             "--region",
@@ -337,28 +354,42 @@ class ProjectSetup:
     def _handle_repo_auth_error(self, output: str) -> bool:
         """Dispatch to the correct repository login/setup method based on output."""
         out = output.lower()
+        # When handling auth errors, we always want to force prompting
+        # since we need to re-authenticate
+        force_prompt = True
+        
         if ".codeartifact" in out or "codeartifact" in out:
-            return self._maybe_setup_codeartifact()
+            return self._maybe_setup_codeartifact(force_prompt)
         elif "artifactory" in out:
-            return self._maybe_setup_artifactory()
+            return self._maybe_setup_artifactory(force_prompt)
         elif "nexus" in out:
-            return self._maybe_setup_nexus()
+            return self._maybe_setup_nexus(force_prompt)
         elif "github.com" in out or "ghcr.io" in out or "github packages" in out:
-            return self._maybe_setup_github_packages()
+            return self._maybe_setup_github_packages(force_prompt)
         elif "azure" in out or "pkgs.dev.azure.com" in out:
-            return self._maybe_setup_azure_artifacts()
+            return self._maybe_setup_azure_artifacts(force_prompt)
         elif "pkg.dev" in out or "artifact registry" in out or "gcp" in out:
-            return self._maybe_setup_google_artifact_registry()
+            return self._maybe_setup_google_artifact_registry(force_prompt)
         else:
             print_info("No known repository type detected in output; skipping custom login.")
             return False
 
-    def _maybe_setup_artifactory(self) -> bool:
-        """Configure JFrog Artifactory repository."""
+    def _maybe_setup_artifactory(self, force_prompt=False) -> bool:
+        """Configure JFrog Artifactory repository.
+        
+        Args:
+            force_prompt: If True, prompt for configuration even if already configured.
+                         If False, use existing configuration without prompting.
+        """
         # Check if Artifactory is already configured
         art_repo = self.ca_settings.get("repositories", {}).get("artifactory", {})
         
-        if art_repo:
+        if art_repo and not force_prompt:
+            # Use existing configuration without prompting
+            print_info("Using existing Artifactory configuration.")
+            # Keep the enabled status as is
+        elif art_repo:
+            # Configuration exists but we're forcing a prompt
             print_info("Artifactory configuration found.")
             reuse = input("Do you want to use Artifactory? (Y/n): ").strip().lower() or "y"
             if reuse != "y":
@@ -371,7 +402,7 @@ class ProjectSetup:
                 art_repo["enabled"] = True
                 self.ca_settings["repositories"]["artifactory"] = art_repo
         else:
-            # Ask if user wants to configure Artifactory
+            # No configuration exists, ask if user wants to configure Artifactory
             ans = input("📦 Configure JFrog Artifactory? (y/N): ").strip().lower()
             if ans != "y":
                 return False
@@ -440,12 +471,21 @@ class ProjectSetup:
             print_error(f"Artifactory login failed: {e}")
             return False
 
-    def _maybe_setup_nexus(self) -> bool:
-        """Configure Sonatype Nexus repository."""
+    def _maybe_setup_nexus(self, force_prompt=False) -> bool:
+        """Configure Sonatype Nexus repository.
+        
+        Args:
+            force_prompt: If True, prompt for configuration even if already configured.
+                         If False, use existing configuration without prompting.
+        """
         # Check if Nexus is already configured
         nexus_repo = self.ca_settings.get("repositories", {}).get("nexus", {})
         
-        if nexus_repo:
+        if nexus_repo and not force_prompt:
+            # Use existing configuration without prompting
+            print_info("Using existing Nexus configuration.")
+            # Keep the enabled status as is
+        elif nexus_repo:
             print_info("Nexus configuration found.")
             reuse = input("Do you want to use Nexus? (Y/n): ").strip().lower() or "y"
             if reuse != "y":
@@ -459,7 +499,7 @@ class ProjectSetup:
                 self.ca_settings["repositories"]["nexus"] = nexus_repo
         else:
             # Ask if user wants to configure Nexus
-            ans = input("📦 Configure Sonatype Nexus? (y/N): ").strip().lower()
+            ans = input("🔄 Configure Sonatype Nexus? (y/N): ").strip().lower()
             if ans != "y":
                 return False
                 
@@ -527,12 +567,21 @@ class ProjectSetup:
             print_error(f"Nexus login failed: {e}")
             return False
 
-    def _maybe_setup_github_packages(self) -> bool:
-        """Configure GitHub Packages repository."""
+    def _maybe_setup_github_packages(self, force_prompt=False) -> bool:
+        """Configure GitHub Packages repository.
+        
+        Args:
+            force_prompt: If True, prompt for configuration even if already configured.
+                         If False, use existing configuration without prompting.
+        """
         # Check if GitHub Packages is already configured
         gh_repo = self.ca_settings.get("repositories", {}).get("github", {})
         
-        if gh_repo:
+        if gh_repo and not force_prompt:
+            # Use existing configuration without prompting
+            print_info("Using existing GitHub Packages configuration.")
+            # Keep the enabled status as is
+        elif gh_repo:
             print_info("GitHub Packages configuration found.")
             reuse = input("Do you want to use GitHub Packages? (Y/n): ").strip().lower() or "y"
             if reuse != "y":
@@ -546,7 +595,7 @@ class ProjectSetup:
                 self.ca_settings["repositories"]["github"] = gh_repo
         else:
             # Ask if user wants to configure GitHub Packages
-            ans = input("📦 Configure GitHub Packages? (y/N): ").strip().lower()
+            ans = input("🐙 Configure GitHub Packages? (y/N): ").strip().lower()
             if ans != "y":
                 return False
                 
@@ -554,10 +603,15 @@ class ProjectSetup:
             gh_repo = {
                 "type": "github",
                 "enabled": True,
-                "url": input("   Repository URL (e.g. https://pypi.pkg.github.com/OWNER/index): ").strip(),
-                "token": input("   Personal Access Token: ").strip(),
-                "trusted": input("   Trust this host? (Y/n): ").strip().lower() != "n"
+                "url": "https://pypi.pkg.github.com/OWNER/simple/",
+                "username": input("   GitHub Username: ").strip(),
+                "token": input("   GitHub Personal Access Token: ").strip(),
+                "owner": input("   Repository Owner (organization or username): ").strip(),
+                "trusted": True
             }
+            
+            # Update URL with the correct owner
+            gh_repo["url"] = gh_repo["url"].replace("OWNER", gh_repo["owner"])
             
             # Add to repositories
             if "repositories" not in self.ca_settings:
@@ -574,6 +628,7 @@ class ProjectSetup:
         try:
             # Create or update pip.conf with credentials
             url = gh_repo["url"]
+            username = gh_repo["username"]
             token = gh_repo["token"]
             
             # Create .netrc file for authentication
@@ -612,12 +667,21 @@ class ProjectSetup:
             print_error(f"GitHub Packages login failed: {e}")
             return False
 
-    def _maybe_setup_azure_artifacts(self) -> bool:
-        """Configure Azure Artifacts repository."""
+    def _maybe_setup_azure_artifacts(self, force_prompt=False) -> bool:
+        """Configure Azure Artifacts repository.
+        
+        Args:
+            force_prompt: If True, prompt for configuration even if already configured.
+                         If False, use existing configuration without prompting.
+        """
         # Check if Azure Artifacts is already configured
         azure_repo = self.ca_settings.get("repositories", {}).get("azure", {})
         
-        if azure_repo:
+        if azure_repo and not force_prompt:
+            # Use existing configuration without prompting
+            print_info("Using existing Azure Artifacts configuration.")
+            # Keep the enabled status as is
+        elif azure_repo:
             print_info("Azure Artifacts configuration found.")
             reuse = input("Do you want to use Azure Artifacts? (Y/n): ").strip().lower() or "y"
             if reuse != "y":
@@ -631,7 +695,7 @@ class ProjectSetup:
                 self.ca_settings["repositories"]["azure"] = azure_repo
         else:
             # Ask if user wants to configure Azure Artifacts
-            ans = input("📦 Configure Azure Artifacts? (y/N): ").strip().lower()
+            ans = input("☁️ Configure Azure Artifacts? (y/N): ").strip().lower()
             if ans != "y":
                 return False
                 
@@ -639,11 +703,16 @@ class ProjectSetup:
             azure_repo = {
                 "type": "azure",
                 "enabled": True,
-                "url": input("   Repository URL (e.g. https://pkgs.dev.azure.com/org/project/_packaging/feed/pypi/simple/): ").strip(),
-                "username": input("   Username (usually just 'azure'): ").strip() or "azure",
+                "organization": input("   Azure DevOps Organization: ").strip(),
+                "project": input("   Project Name: ").strip(),
+                "feed": input("   Feed Name: ").strip(),
+                "username": input("   Username (typically just use any string): ").strip() or "azure",
                 "token": input("   Personal Access Token: ").strip(),
-                "trusted": input("   Trust this host? (Y/n): ").strip().lower() != "n"
+                "trusted": True
             }
+            
+            # Build the URL from components
+            azure_repo["url"] = f"https://pkgs.dev.azure.com/{azure_repo['organization']}/{azure_repo['project']}/_packaging/{azure_repo['feed']}/pypi/simple/"
             
             # Add to repositories
             if "repositories" not in self.ca_settings:
@@ -699,12 +768,21 @@ class ProjectSetup:
             print_error(f"Azure Artifacts login failed: {e}")
             return False
 
-    def _maybe_setup_google_artifact_registry(self) -> bool:
-        """Configure Google Artifact Registry repository."""
+    def _maybe_setup_google_artifact_registry(self, force_prompt=False) -> bool:
+        """Configure Google Artifact Registry repository.
+        
+        Args:
+            force_prompt: If True, prompt for configuration even if already configured.
+                         If False, use existing configuration without prompting.
+        """
         # Check if Google Artifact Registry is already configured
         gcp_repo = self.ca_settings.get("repositories", {}).get("google", {})
         
-        if gcp_repo:
+        if gcp_repo and not force_prompt:
+            # Use existing configuration without prompting
+            print_info("Using existing Google Artifact Registry configuration.")
+            # Keep the enabled status as is
+        elif gcp_repo:
             print_info("Google Artifact Registry configuration found.")
             reuse = input("Do you want to use Google Artifact Registry? (Y/n): ").strip().lower() or "y"
             if reuse != "y":
@@ -718,7 +796,7 @@ class ProjectSetup:
                 self.ca_settings["repositories"]["google"] = gcp_repo
         else:
             # Ask if user wants to configure Google Artifact Registry
-            ans = input("📦 Configure Google Artifact Registry? (y/N): ").strip().lower()
+            ans = input("☁️ Configure Google Artifact Registry? (y/N): ").strip().lower()
             if ans != "y":
                 return False
                 
@@ -726,9 +804,14 @@ class ProjectSetup:
             gcp_repo = {
                 "type": "google",
                 "enabled": True,
-                "url": input("   Repository URL (e.g. https://us-central1-python.pkg.dev/project-id/repo-name/simple/): ").strip(),
-                "trusted": input("   Trust this host? (Y/n): ").strip().lower() != "n"
+                "project": input("   GCP Project ID: ").strip(),
+                "location": input("   Location (e.g., us-west1): ").strip(),
+                "repository": input("   Repository Name: ").strip(),
+                "trusted": True
             }
+            
+            # Build the URL from components
+            gcp_repo["url"] = f"https://{gcp_repo['location']}-python.pkg.dev/{gcp_repo['project']}/{gcp_repo['repository']}/simple/"
             
             # Add to repositories
             if "repositories" not in self.ca_settings:
@@ -1213,7 +1296,7 @@ class ProjectSetup:
                     # Ask if user wants to configure additional repositories
                     setup_repos = input("Would you like to configure additional package repositories? (y/N): ").strip().lower()
                     if setup_repos == "y":
-                        self._setup_repositories()
+                        self._setup_repositories(force_prompt=True)
                         print_info(f"Retrying installation of {package_name}...")
                         # Retry the command after setting up repositories
                         retry_result = execute_pip_command()
