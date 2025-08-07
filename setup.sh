@@ -7,6 +7,18 @@ set -euo pipefail
 FETCH_LATEST="interactive"
 CI_MODE="no"
 
+# Check if setup.json exists and has a repo_update_preference
+if [ -f "setup.json" ]; then
+  # Try to extract repo_update_preference using grep and sed
+  # This avoids requiring jq or python for JSON parsing
+  STORED_PREFERENCE=$(grep -o '"repo_update_preference"\s*:\s*"[^"]*"' setup.json 2>/dev/null | sed 's/.*"\([^"]*\)".*/\1/' || echo "")
+  
+  if [ -n "$STORED_PREFERENCE" ]; then
+    echo "🔒 Using stored repository update preference: $STORED_PREFERENCE"
+    FETCH_LATEST="$STORED_PREFERENCE"
+  fi
+fi
+
 usage() {
   cat <<EOF
 Usage: $0 [options]
@@ -50,6 +62,7 @@ if [[ "$FETCH_LATEST" == "yes" ]]; then
   curl -sSL \
     https://raw.githubusercontent.com/geekcafe/py-setup-tool/main/setup.py \
     -o setup.py
+  
 fi
 
 # --- run the Python installer ---
