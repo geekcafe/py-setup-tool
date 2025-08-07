@@ -286,9 +286,7 @@ class ProjectSetup:
             "--tool",
             "pip",
             "--domain",
-            ca_repo["domain"],
-            "--domain-owner",
-            ca_repo["domain_owner"] or "self",
+            ca_repo["domain"],            
             "--repository",
             ca_repo["repository"],
             "--region",
@@ -1566,6 +1564,54 @@ break-system-packages = true
 
         print_success("Created pip.conf with break-system-packages enabled")
             
+    def _get_repo_update_preference(self, force_prompt=False) -> str:
+        """Get the user's preference for pulling the latest setup.py from repository.
+        
+        Args:
+            force_prompt: If True, prompt for preference even if already configured.
+                         If False, use existing preference without prompting.
+                         
+        Returns:
+            str: The repository update preference ('yes', 'no', or 'interactive')
+        """
+        # Check if repository update preference is already configured
+        update_preference = self.ca_settings.get("repo_update_preference")
+        
+        if update_preference and not force_prompt:
+            # Use existing preference without prompting
+            print_info(f"Using stored repository update preference: {update_preference}")
+            return update_preference
+        
+        # Prompt for repository update preference
+        print("\n🔄 Repository Update Preference")
+        print("=" * 45)
+        print("Choose how to handle repository updates:")
+        print("  • yes        : Always pull the latest setup.py from repository")
+        print("  • no         : Never pull the latest setup.py")
+        print("  • interactive: Ask each time (default)")
+        print()
+        
+        while True:
+            response = input("Repository update preference [interactive/yes/no]: ").strip().lower()
+            if response in ('', 'interactive'):
+                update_preference = 'interactive'
+                break
+            elif response in ('yes', 'y'):
+                update_preference = 'yes'
+                break
+            elif response in ('no', 'n'):
+                update_preference = 'no'
+                break
+            else:
+                print_error("Invalid choice. Please enter 'interactive', 'yes', or 'no'.")
+        
+        # Save the preference
+        self.ca_settings["repo_update_preference"] = update_preference
+        self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+        print_success(f"Saved repository update preference: {update_preference}")
+        
+        return update_preference
+    
     def _get_env_action_preference(self, force_prompt=False) -> str:
         """Get the user's preference for environment action (clean, reuse, upgrade).
         
