@@ -1012,25 +1012,58 @@ class ProjectSetup:
                 
             # Get expected paths from settings
             expected_paths = self.ca_settings.get("python_paths", [])
-            if not expected_paths:  # Fallback if not found in settings
-                expected_paths = [
-                    f"#!{str(Path.cwd() / VENV / 'bin' / 'python')}",
-                    f"#!{str(Path.cwd() / VENV / 'bin' / 'python3')}"
-                ]
             
-            # Check if the shebang matches any of the expected paths
-            if shebang not in expected_paths:
-                # Try to check if the paths match after resolving symlinks
-                # This is a fallback for compatibility with existing setup.json files
-                python_path = shebang[2:] if shebang.startswith('#!') else shebang
-                resolved_expected_paths = [path[2:] if path.startswith('#!') else path for path in expected_paths]
+            # If no paths are stored or we're using the old format, generate default paths
+            if not expected_paths:  
+                # Use absolute paths for the fallback
+                abs_venv_path = Path(VENV).resolve()
+                expected_paths = [
+                    f"#!{str(abs_venv_path / 'bin' / 'python')}",
+                    f"#!{str(abs_venv_path / 'bin' / 'python3')}"
+                ]
                 
-                if python_path not in resolved_expected_paths:
-                    print_error(f"Virtual environment has incorrect path references:")
-                    print(f"   Expected one of: {expected_paths}")
-                    print(f"   Found:           {shebang}")
-                    print("   This usually happens when the project directory was renamed or moved.")
-                    return False
+                # Also look for specific Python versions
+                bin_dir = abs_venv_path / "bin"
+                if bin_dir.exists():
+                    for item in bin_dir.iterdir():
+                        if item.name.startswith("python3.") and item.is_file() and os.access(item, os.X_OK):
+                            expected_paths.append(f"#!{str(item)}")
+            
+            # Direct match - this should work with the new format
+            if shebang in expected_paths:
+                return True
+                
+            # No direct match, try more flexible matching for compatibility
+            # with both old and new formats
+            
+            # Extract the interpreter path from the shebang
+            python_path = shebang[2:] if shebang.startswith('#!') else shebang
+            
+            # Extract paths from expected_paths (removing #! if present)
+            resolved_expected_paths = [path[2:] if path.startswith('#!') else path for path in expected_paths]
+            
+            # Check if the path matches any expected path
+            if python_path in resolved_expected_paths:
+                return True
+                
+            # Check if the basename matches (most flexible, last resort)
+            python_basename = os.path.basename(python_path)
+            for exp_path in resolved_expected_paths:
+                if os.path.basename(exp_path) == python_basename:
+                    # Found a match by basename, update the stored paths for next time
+                    if shebang not in expected_paths:
+                        expected_paths.append(shebang)
+                        self.ca_settings["python_paths"] = expected_paths
+                        self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                        print_info(f"Updated Python interpreter paths in {self.CA_CONFIG}")
+                    return True
+            
+            # If we get here, no match was found
+            print_error(f"Virtual environment has incorrect path references:")
+            print(f"   Expected one of: {expected_paths}")
+            print(f"   Found:           {shebang}")
+            print("   This usually happens when the project directory was renamed or moved.")
+            return False
                     
         except (IOError, OSError) as e:
             print_error(f"Could not check virtual environment integrity: {e}")
@@ -1252,16 +1285,15 @@ class ProjectSetup:
 
     def _store_python_interpreter_path(self):
         """Detect and store the actual Python interpreter path in the virtual environment."""
-        venv_path = Path(VENV)
+        venv_path = Path(VENV).resolve()  # Get absolute path to venv
         python_paths = set()  # Use a set to avoid duplicates
         
         # Check for common Python interpreter names
         for python_name in ["python", "python3"]:
             python_path = venv_path / "bin" / python_name
             if python_path.exists():
-                # Store the path as it appears in the shebang (with the venv path)
-                # This is important for integrity checks
-                venv_python_path = f"#!{str(python_path)}"
+                # Store the absolute path with shebang prefix as it would appear in scripts
+                venv_python_path = f"#!{str(python_path.absolute())}"
                 if venv_python_path not in python_paths:
                     python_paths.add(venv_python_path)
                     print_info(f"Detected Python interpreter: {venv_python_path}")
@@ -1271,7 +1303,7 @@ class ProjectSetup:
         if bin_dir.exists():
             for item in bin_dir.iterdir():
                 if item.name.startswith("python3.") and item.is_file() and os.access(item, os.X_OK):
-                    venv_python_path = f"#!{str(item)}"
+                    venv_python_path = f"#!{str(item.absolute())}"
                     if venv_python_path not in python_paths:
                         python_paths.add(venv_python_path)
                         print_info(f"Detected versioned Python interpreter: {venv_python_path}")
