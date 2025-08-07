@@ -1209,6 +1209,18 @@ class ProjectSetup:
             with open(pip_script, 'r') as f:
                 shebang = f.readline().strip()
                 
+            # Extract the interpreter path from the shebang
+            python_path = shebang[2:] if shebang.startswith('#!') else shebang
+            python_path_obj = Path(python_path)
+            
+            # First check: Does the interpreter path in the shebang actually exist?
+            # This catches project directory renames where the path is now invalid
+            if not python_path_obj.exists() or not os.access(python_path, os.X_OK):
+                print_error(f"Virtual environment interpreter not found:")
+                print(f"   Path in shebang: {python_path}")
+                print("   This usually happens when the project directory was renamed or moved.")
+                return False
+                
             # Get expected paths from settings
             expected_paths = self.ca_settings.get("python_paths", [])
             
@@ -1230,34 +1242,50 @@ class ProjectSetup:
             
             # Direct match - this should work with the new format
             if shebang in expected_paths:
-                return True
+                # Even if there's a match, verify the path exists (handles directory renames)
+                if python_path_obj.exists() and os.access(python_path, os.X_OK):
+                    return True
+                else:
+                    # Path matches but doesn't exist - likely a directory rename
+                    print_error(f"Virtual environment interpreter not found:")
+                    print(f"   Path in shebang: {python_path}")
+                    print("   This usually happens when the project directory was renamed or moved.")
+                    return False
                 
             # No direct match, try more flexible matching for compatibility
             # with both old and new formats
-            
-            # Extract the interpreter path from the shebang
-            python_path = shebang[2:] if shebang.startswith('#!') else shebang
             
             # Extract paths from expected_paths (removing #! if present)
             resolved_expected_paths = [path[2:] if path.startswith('#!') else path for path in expected_paths]
             
             # Check if the path matches any expected path
             if python_path in resolved_expected_paths:
-                return True
+                # Even if there's a match, verify the path exists
+                if python_path_obj.exists() and os.access(python_path, os.X_OK):
+                    return True
+                else:
+                    # Path matches but doesn't exist - likely a directory rename
+                    print_error(f"Virtual environment interpreter not found:")
+                    print(f"   Path in shebang: {python_path}")
+                    print("   This usually happens when the project directory was renamed or moved.")
+                    return False
                 
             # Check if the basename matches (most flexible, last resort)
             python_basename = os.path.basename(python_path)
             for exp_path in resolved_expected_paths:
                 if os.path.basename(exp_path) == python_basename:
-                    # Found a match by basename, update the stored paths for next time
-                    if shebang not in expected_paths:
-                        expected_paths.append(shebang)
-                        self.ca_settings["python_paths"] = expected_paths
-                        self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
-                        print_info(f"Updated Python interpreter paths in {self.CA_CONFIG}")
-                    return True
+                    exp_path_obj = Path(exp_path)
+                    if exp_path_obj.exists() and os.access(exp_path, os.X_OK):
+                        # Found a match by basename that exists, update the stored paths for next time
+                        new_shebang = f"#!{exp_path}"
+                        if new_shebang not in expected_paths:
+                            expected_paths.append(new_shebang)
+                            self.ca_settings["python_paths"] = expected_paths
+                            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                            print_info(f"Updated Python interpreter paths in {self.CA_CONFIG}")
+                        return True
             
-            # If we get here, no match was found
+            # If we get here, no valid match was found
             print_error(f"Virtual environment has incorrect path references:")
             print(f"   Expected one of: {expected_paths}")
             print(f"   Found:           {shebang}")
