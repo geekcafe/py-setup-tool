@@ -1566,7 +1566,58 @@ break-system-packages = true
 
         print_success("Created pip.conf with break-system-packages enabled")
             
+    def _get_env_action_preference(self, force_prompt=False) -> str:
+        """Get the user's preference for environment action (clean, reuse, upgrade).
+        
+        Args:
+            force_prompt: If True, prompt for preference even if already configured.
+                         If False, use existing preference without prompting.
+                         
+        Returns:
+            str: The environment action preference ('clean', 'reuse', or 'upgrade')
+        """
+        # Check if environment action preference is already configured
+        env_preference = self.ca_settings.get("env_action_preference")
+        
+        if env_preference and not force_prompt:
+            # Use existing preference without prompting
+            print_info(f"Using stored environment action preference: {env_preference}")
+            return env_preference
+        
+        # Prompt for environment action preference
+        print("\n🔧 Environment Action Preference")
+        print("=" * 45)
+        print("Choose how to handle the virtual environment:")
+        print("  • clean  : Remove and recreate the environment if it exists")
+        print("  • reuse  : Keep existing environment and only update if needed")
+        print("  • upgrade: Keep environment but upgrade all packages")
+        print()
+        
+        while True:
+            response = input("Environment action preference [reuse/clean/upgrade]: ").strip().lower()
+            if response in ('', 'reuse'):
+                env_preference = 'reuse'
+                break
+            elif response in ('clean'):
+                env_preference = 'clean'
+                break
+            elif response in ('upgrade'):
+                env_preference = 'upgrade'
+                break
+            else:
+                print_error("Invalid choice. Please enter 'reuse', 'clean', or 'upgrade'.")
+        
+        # Save the preference
+        self.ca_settings["env_action_preference"] = env_preference
+        self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+        print_success(f"Saved environment action preference: {env_preference}")
+        
+        return env_preference
+        
     def _setup_pip(self):
+        # Get environment action preference
+        env_preference = self._get_env_action_preference()
+        
         # Check for virtual environment path integrity issues
         if not self._check_venv_path_integrity():
             if not self._handle_corrupted_venv():
@@ -1574,10 +1625,16 @@ break-system-packages = true
 
         print(f"🐍 Setting up Python virtual environment at {VENV}...")
         try:
-            # Only create venv if it doesn't exist
-            if not Path(VENV).exists():
+            # Handle environment based on preference
+            if env_preference == 'clean' and Path(VENV).exists():
+                import shutil
+                print(f"🗑️  Removing existing virtual environment at {VENV}...")
+                shutil.rmtree(VENV)
+                print_success(f"Removed {VENV}")
                 subprocess.run(["python3", "-m", "venv", VENV], check=True)
-                
+                self._store_python_interpreter_path()
+            elif not Path(VENV).exists():
+                subprocess.run(["python3", "-m", "venv", VENV], check=True)
                 # After creating the venv, detect and store the actual Python path
                 self._store_python_interpreter_path()
             else:
@@ -1599,15 +1656,21 @@ break-system-packages = true
 
             # Install from requirements files with progress indication
             for req_file in self.get_list_of_requirements_files():
+                # Add --upgrade flag if preference is 'upgrade'
+                upgrade_flag = "--upgrade" if env_preference == "upgrade" else ""
+                pip_args = ["install", "-r", req_file]
+                if upgrade_flag:
+                    pip_args.append(upgrade_flag)
+                    
                 self._run_pip_command_with_progress(
-                    ["install", "-r", req_file, "--upgrade"],
-                    f"Installing packages from {req_file}"
+                    pip_args,
+                    f"Installing packages from {req_file}{' (with upgrade)' if upgrade_flag else ''}"
                 )
 
             # Install local package in editable mode with progress indication
             self._run_pip_command_with_progress(
-                ["install", "-e", "."],
-                "Installing local package in editable mode"
+                ["install", "-e", "."] + (["--upgrade"] if env_preference == "upgrade" else []),
+                f"Installing local package in editable mode{' (with upgrade)' if env_preference == 'upgrade' else ''}"
             )
 
         except subprocess.CalledProcessError as e:
