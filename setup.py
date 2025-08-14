@@ -1527,7 +1527,7 @@ class ProjectSetup:
             print_header("Git Configuration")
             print("setup.json contains configuration that may be specific to your environment.")
             print("This can cause issues when working with other developers.")
-            response = input("Would you like to exclude setup.json from git tracking? (y/n): ").strip().lower()
+            response = input("Would you like to exclude setup.json from git tracking? (Y/n): ").strip().lower() or 'y'
             
             # Ensure setup_prompted structure exists
             if "setup_prompted" not in self.ca_settings:
