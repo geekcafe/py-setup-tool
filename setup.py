@@ -1539,8 +1539,8 @@ class ProjectSetup:
                         print_info(f"Detected versioned Python interpreter: {venv_python_path}")
         
         if python_paths:
-            # Update settings with the detected paths (convert set back to list)
-            self.ca_settings["python_paths"] = list(python_paths)
+            # Update settings with the detected paths (convert set back to list and sort alphabetically)
+            self.ca_settings["python_paths"] = sorted(list(python_paths))
             
             # Save to setup.json
             self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
