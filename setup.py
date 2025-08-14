@@ -76,6 +76,9 @@ class ProjectSetup:
                 str(Path.cwd() / VENV / "bin" / "python"),
                 str(Path.cwd() / VENV / "bin" / "python3"),
             ],
+            "setup_prompted": {
+                "gitignore": False  # Track if user has been prompted about gitignore
+            },
             "repositories": {
                 "pypi": {
                     "type": "pypi",
@@ -1186,6 +1189,10 @@ class ProjectSetup:
         self._create_pyproject_toml()
         (self._setup_poetry if self._use_poetry else self._setup_pip)()
         self.print_env_info()
+        
+        # Check if setup.json should be excluded from git
+        self._check_gitignore_setup()
+        
         print("\n🎉 Setup complete!")
         if not self._use_poetry:
             print(
@@ -1513,6 +1520,52 @@ class ProjectSetup:
         if not self._run_pip_with_progress(cmd, description):
             raise subprocess.CalledProcessError(1, cmd)
 
+    def _check_gitignore_setup(self):
+        """Check if setup.json should be added to .gitignore and prompt user if needed."""
+        # Check if user has already been prompted about gitignore
+        if not self.ca_settings.get("setup_prompted", {}).get("gitignore", False):
+            print_header("Git Configuration")
+            print("setup.json contains configuration that may be specific to your environment.")
+            print("This can cause issues when working with other developers.")
+            response = input("Would you like to exclude setup.json from git tracking? (y/n): ").strip().lower()
+            
+            # Ensure setup_prompted structure exists
+            if "setup_prompted" not in self.ca_settings:
+                self.ca_settings["setup_prompted"] = {}
+            
+            # Mark that we've prompted the user
+            self.ca_settings["setup_prompted"]["gitignore"] = True
+            
+            if response.startswith('y'):
+                # Add setup.json to .gitignore
+                gitignore_path = Path(".gitignore")
+                
+                # Read existing .gitignore content or create new file
+                if gitignore_path.exists():
+                    content = gitignore_path.read_text()
+                    lines = content.splitlines()
+                    
+                    # Check if setup.json is already in .gitignore
+                    if "setup.json" not in lines:
+                        # Add setup.json to .gitignore
+                        with open(gitignore_path, "a") as f:
+                            if not content.endswith("\n"):
+                                f.write("\n")
+                            f.write("# Local configuration\nsetup.json\n")
+                        print_success("Added setup.json to .gitignore")
+                    else:
+                        print_info("setup.json is already in .gitignore")
+                else:
+                    # Create new .gitignore file
+                    with open(gitignore_path, "w") as f:
+                        f.write("# Local configuration\nsetup.json\n")
+                    print_success("Created .gitignore and added setup.json")
+            else:
+                print_info("setup.json will be tracked by git")
+                
+            # Save the updated settings
+            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+    
     def _store_python_interpreter_path(self):
         """Detect and store the actual Python interpreter path in the virtual environment."""
         venv_path = Path(VENV).resolve()  # Get absolute path to venv
