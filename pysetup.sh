@@ -7,11 +7,11 @@ set -euo pipefail
 FETCH_LATEST="interactive"
 CI_MODE="no"
 
-# Check if setup.json exists and has a repo_update_preference
-if [ -f "setup.json" ]; then
+# Check if .pysetup.json exists and has a repo_update_preference
+if [ -f ".pysetup.json" ]; then
   # Try to extract repo_update_preference using grep and sed
   # This avoids requiring jq or python for JSON parsing
-  STORED_PREFERENCE=$(grep -o '"repo_update_preference"\s*:\s*"[^"]*"' setup.json 2>/dev/null | sed 's/.*"\([^"]*\)".*/\1/' || echo "")
+  STORED_PREFERENCE=$(grep -o '"repo_update_preference"\s*:\s*"[^"]*"' .pysetup.json 2>/dev/null | sed 's/.*"\([^"]*\)".*/\1/' || echo "")
   
   if [ -n "$STORED_PREFERENCE" ]; then
     echo "🔒 Using stored repository update preference: $STORED_PREFERENCE"

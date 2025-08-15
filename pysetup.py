@@ -37,7 +37,7 @@ def print_header(msg):
 
 
 class ProjectSetup:
-    CA_CONFIG = Path("setup.json")
+    CA_CONFIG = Path(".pysetup.json")
     
     # Authentication error patterns to detect in pip output
     AUTH_ERROR_PATTERNS = [
@@ -1190,7 +1190,7 @@ class ProjectSetup:
         (self._setup_poetry if self._use_poetry else self._setup_pip)()
         self.print_env_info()
         
-        # Check if setup.json should be excluded from git
+        # Check if .pysetup.json should be excluded from git
         self._check_gitignore_setup()
         
         print("\n🎉 Setup complete!")
@@ -1521,13 +1521,13 @@ class ProjectSetup:
             raise subprocess.CalledProcessError(1, cmd)
 
     def _check_gitignore_setup(self):
-        """Check if setup.json should be added to .gitignore and prompt user if needed."""
+        """Check if .pysetup.json should be added to .gitignore and prompt user if needed."""
         # Check if user has already been prompted about gitignore
         if not self.ca_settings.get("setup_prompted", {}).get("gitignore", False):
             print_header("Git Configuration")
-            print("setup.json contains configuration that may be specific to your environment.")
+            print(".pysetup.json contains configuration that may be specific to your environment.")
             print("This can cause issues when working with other developers.")
-            response = input("Would you like to exclude setup.json from git tracking? (Y/n): ").strip().lower() or 'y'
+            response = input("Would you like to exclude .pysetup.json from git tracking? (Y/n): ").strip().lower() or 'y'
             
             # Ensure setup_prompted structure exists
             if "setup_prompted" not in self.ca_settings:
@@ -1537,7 +1537,7 @@ class ProjectSetup:
             self.ca_settings["setup_prompted"]["gitignore"] = True
             
             if response.startswith('y'):
-                # Add setup.json to .gitignore
+                # Add .pysetup.json to .gitignore
                 gitignore_path = Path(".gitignore")
                 
                 # Read existing .gitignore content or create new file
@@ -1545,23 +1545,23 @@ class ProjectSetup:
                     content = gitignore_path.read_text()
                     lines = content.splitlines()
                     
-                    # Check if setup.json is already in .gitignore
-                    if "setup.json" not in lines:
-                        # Add setup.json to .gitignore
+                    # Check if .pysetup.json is already in .gitignore
+                    if ".pysetup.json" not in lines:
+                        # Add .pysetup.json to .gitignore
                         with open(gitignore_path, "a") as f:
                             if not content.endswith("\n"):
                                 f.write("\n")
-                            f.write("# Local configuration\nsetup.json\n")
-                        print_success("Added setup.json to .gitignore")
+                            f.write("# Local configuration\n.pysetup.json\n")
+                        print_success("Added .pysetup.json to .gitignore")
                     else:
-                        print_info("setup.json is already in .gitignore")
+                        print_info(".pysetup.json is already in .gitignore")
                 else:
                     # Create new .gitignore file
                     with open(gitignore_path, "w") as f:
-                        f.write("# Local configuration\nsetup.json\n")
-                    print_success("Created .gitignore and added setup.json")
+                        f.write("# Local configuration\n.pysetup.json\n")
+                    print_success("Created .gitignore and added .pysetup.json")
             else:
-                print_info("setup.json will be tracked by git")
+                print_info(".pysetup.json will be tracked by git")
                 
             # Save the updated settings
             self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
@@ -1595,7 +1595,7 @@ class ProjectSetup:
             # Update settings with the detected paths (convert set back to list and sort alphabetically)
             self.ca_settings["python_paths"] = sorted(list(python_paths))
             
-            # Save to setup.json
+            # Save to .pysetup.json
             self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
             print_success(f"Stored Python interpreter paths in {self.CA_CONFIG}")
         else:
