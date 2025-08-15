@@ -1179,9 +1179,9 @@ class ProjectSetup:
             moto
         """
 
-    def setup(self):
+    def setup(self, force_update_sh=False, ci_mode=False):
         # Check for and fetch the latest pysetup.sh first
-        if self._check_and_fetch_setup_sh():
+        if self._check_and_fetch_setup_sh(force_update=force_update_sh):
             # If pysetup.sh was updated, exit and instruct the user to restart
             sys.exit(0)
             
@@ -1622,9 +1622,12 @@ break-system-packages = true
 
         print_success("Created pip.conf with break-system-packages enabled")
             
-    def _check_and_fetch_setup_sh(self) -> bool:
+    def _check_and_fetch_setup_sh(self, force_update=False) -> bool:
         """Check for and fetch the latest pysetup.sh from repository.
         
+        Args:
+            force_update: If True, update pysetup.sh regardless of content comparison
+            
         Returns:
             bool: True if pysetup.sh was updated, False otherwise
         """
@@ -1646,10 +1649,9 @@ break-system-packages = true
         setup_sh_url = "https://raw.githubusercontent.com/geekcafe/py-setup-tool/main/pysetup.sh"
         
         try:
-            # Fetch the latest pysetup.sh content
-            import urllib.request
-            with urllib.request.urlopen(setup_sh_url) as response:
-                latest_setup_sh = response.read().decode('utf-8')
+            # Fetch the latest pysetup.sh content with retry logic
+            latest_setup_sh_bytes = fetch_url_with_retry(setup_sh_url)
+            latest_setup_sh = latest_setup_sh_bytes.decode('utf-8')
                 
             # Check if pysetup.sh exists locally
             setup_sh_path = Path("pysetup.sh")
@@ -1658,9 +1660,25 @@ break-system-packages = true
                 with open(setup_sh_path, 'r', encoding='utf-8') as f:
                     current_setup_sh = f.read()
                     
-                if current_setup_sh == latest_setup_sh:
+                if current_setup_sh == latest_setup_sh and not force_update:
                     print_info("pysetup.sh is already up to date.")
                     return False
+                elif force_update:
+                    print_info("Force updating pysetup.sh regardless of content comparison.")
+                else:
+                    # Debug info to help troubleshoot update issues
+                    print_info("Detected differences between local and remote pysetup.sh.")
+                    
+                    # Calculate content length difference
+                    local_len = len(current_setup_sh)
+                    remote_len = len(latest_setup_sh)
+                    print_info(f"Local file size: {local_len} bytes, Remote file size: {remote_len} bytes")
+                    
+                    # Show first difference position
+                    for i, (local_char, remote_char) in enumerate(zip(current_setup_sh, latest_setup_sh)):
+                        if local_char != remote_char:
+                            print_info(f"First difference at position {i}: Local '{local_char}' vs Remote '{remote_char}'")
+                            break
                     
                 # Backup the current pysetup.sh
                 backup_path = Path("pysetup.sh.bak")
@@ -1994,9 +2012,49 @@ break-system-packages = true
         return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
 
 
+def fetch_url_with_retry(url, max_retries=3, retry_delay=2):
+    """Fetch URL content with retry logic."""
+    import urllib.request
+    import socket
+    import time
+    
+    # Add cache-busting query parameter with current timestamp to avoid caching issues
+    cache_buster = int(time.time())
+    url_with_cache_buster = f"{url}?_cb={cache_buster}"
+    
+    for attempt in range(max_retries):
+        try:
+            # Create a request with headers that prevent caching
+            request = urllib.request.Request(
+                url_with_cache_buster,
+                headers={
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
+                }
+            )
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.read()
+        except (urllib.error.URLError, socket.timeout) as e:
+            if attempt < max_retries - 1:
+                print_warning(f"Network error: {e}. Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                raise Exception(f"Failed to fetch {url} after {max_retries} attempts: {e}")
+
+
 def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Python project setup tool")
+    parser.add_argument("--force-update-sh", action="store_true", help="Force update pysetup.sh regardless of content comparison")
+    parser.add_argument("--ci", action="store_true", help="Run in CI mode (non-interactive)")
+    
+    args = parser.parse_args()
+    
     ps = ProjectSetup()
-    ps.setup()
+    ps.setup(force_update_sh=args.force_update_sh, ci_mode=args.ci)
 
 
 if __name__ == "__main__":
