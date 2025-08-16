@@ -1535,11 +1535,32 @@ class ProjectSetup:
             # Get the project name from the current directory
             project_name = Path.cwd().name
             
+            # Try to get project description from pyproject.toml if it exists
+            project_description = "Your project description here."
+            pyproject_path = Path("pyproject.toml")
+            
+            if pyproject_path.exists():
+                try:
+                    with open(pyproject_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        
+                        # Try to extract description from poetry section
+                        poetry_match = re.search(r'\[tool\.poetry\][^\[]*description\s*=\s*"([^"]*)"', content)
+                        if poetry_match:
+                            project_description = poetry_match.group(1)
+                        else:
+                            # Try to extract from project section (PEP 621)
+                            project_match = re.search(r'\[project\][^\[]*description\s*=\s*"([^"]*)"', content)
+                            if project_match:
+                                project_description = project_match.group(1)
+                except Exception as e:
+                    print_info(f"Could not extract project description from pyproject.toml: {e}")
+            
             # Create a default README.md template
             readme_content = f"""# {project_name}
 
 ## Description
-A Python project created with py-setup-tool.
+{project_description}
 
 ## Installation
 
@@ -1568,7 +1589,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+Add your license here.
 """
             
             # Write the default README.md file
