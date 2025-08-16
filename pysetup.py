@@ -1175,8 +1175,7 @@ class ProjectSetup:
             twine
             wheel
             pkginfo
-            hatchling
-            moto
+            hatchling            
         """
 
     def setup(self, force_update_sh=False, ci_mode=False):
@@ -1521,8 +1520,179 @@ class ProjectSetup:
             raise subprocess.CalledProcessError(1, cmd)
 
     def _check_gitignore_setup(self):
-        """Check if .pysetup.json should be added to .gitignore and prompt user if needed."""
-        # Check if user has already been prompted about gitignore
+        """Check if .gitignore file exists and create a default Python one if needed.
+        Also check if .pysetup.json should be added to .gitignore and prompt user if needed.
+        """
+        # First, check if .gitignore exists
+        gitignore_path = Path(".gitignore")
+        
+        # If .gitignore doesn't exist, create a default Python .gitignore
+        if not gitignore_path.exists():
+            print_header("Git Configuration")
+            print("No .gitignore file found. Creating a default Python .gitignore file.")
+            
+            # Fetch the standard Python .gitignore content from GitHub
+            python_gitignore = """
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[codz]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py.cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+#   For a library or package, you might want to ignore these files since the code is
+#   intended to run in multiple environments; otherwise, check them in:
+# .python-version
+
+# pipenv
+#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
+#   However, in case of collaboration, if having platform-specific dependencies or dependencies
+#   having no cross-platform support, pipenv may install dependencies that don't work, or not
+#   install all needed dependencies.
+#Pipfile.lock
+
+# poetry
+#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
+#   This is especially recommended for binary packages to ensure reproducibility, and is more
+#   commonly ignored for libraries.
+#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
+#poetry.lock
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# PyCharm
+#.idea/
+
+# VS Code
+#.vscode/
+
+# Local configuration
+.pysetup.json
+"""
+            
+            # Write the default Python .gitignore file
+            with open(gitignore_path, "w") as f:
+                f.write(python_gitignore)
+            print_success("Created default Python .gitignore file")
+            
+            # Since we've already added .pysetup.json to the default .gitignore,
+            # we don't need to prompt the user about it
+            if "setup_prompted" not in self.ca_settings:
+                self.ca_settings["setup_prompted"] = {}
+            self.ca_settings["setup_prompted"]["gitignore"] = True
+            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+            return
+        
+        # If .gitignore exists, check if user has already been prompted about adding .pysetup.json
         if not self.ca_settings.get("setup_prompted", {}).get("gitignore", False):
             print_header("Git Configuration")
             print(".pysetup.json contains configuration that may be specific to your environment.")
@@ -1537,29 +1707,20 @@ class ProjectSetup:
             self.ca_settings["setup_prompted"]["gitignore"] = True
             
             if response.startswith('y'):
-                # Add .pysetup.json to .gitignore
-                gitignore_path = Path(".gitignore")
+                # Read existing .gitignore content
+                content = gitignore_path.read_text()
+                lines = content.splitlines()
                 
-                # Read existing .gitignore content or create new file
-                if gitignore_path.exists():
-                    content = gitignore_path.read_text()
-                    lines = content.splitlines()
-                    
-                    # Check if .pysetup.json is already in .gitignore
-                    if ".pysetup.json" not in lines:
-                        # Add .pysetup.json to .gitignore
-                        with open(gitignore_path, "a") as f:
-                            if not content.endswith("\n"):
-                                f.write("\n")
-                            f.write("# Local configuration\n.pysetup.json\n")
-                        print_success("Added .pysetup.json to .gitignore")
-                    else:
-                        print_info(".pysetup.json is already in .gitignore")
-                else:
-                    # Create new .gitignore file
-                    with open(gitignore_path, "w") as f:
+                # Check if .pysetup.json is already in .gitignore
+                if ".pysetup.json" not in lines:
+                    # Add .pysetup.json to .gitignore
+                    with open(gitignore_path, "a") as f:
+                        if not content.endswith("\n"):
+                            f.write("\n")
                         f.write("# Local configuration\n.pysetup.json\n")
-                    print_success("Created .gitignore and added .pysetup.json")
+                    print_success("Added .pysetup.json to .gitignore")
+                else:
+                    print_info(".pysetup.json is already in .gitignore")
             else:
                 print_info(".pysetup.json will be tracked by git")
                 
