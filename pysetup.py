@@ -1179,6 +1179,9 @@ class ProjectSetup:
         """
 
     def setup(self, force_update_sh=False, ci_mode=False):
+        # Store CI mode for use in other methods
+        self._ci_mode = ci_mode
+        
         # Check for and fetch the latest pysetup.sh first
         if self._check_and_fetch_setup_sh(force_update=force_update_sh):
             # If pysetup.sh was updated, exit and instruct the user to restart
@@ -1194,6 +1197,9 @@ class ProjectSetup:
         
         # Check if .pysetup.json should be excluded from git
         self._check_gitignore_setup()
+        
+        # Check if Git is initialized and set it up if needed
+        self._check_git_setup()
         
         print("\n🎉 Setup complete!")
         if not self._use_poetry:
@@ -1603,6 +1609,65 @@ Add your license here.
                 self.ca_settings["setup_prompted"] = {}
             self.ca_settings["setup_prompted"]["readme_created"] = True
             self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+    
+    def _check_git_setup(self):
+        """Check if Git is initialized in the project and set it up if needed.
+        
+        If in CI mode, this will skip any prompts and not initialize Git.
+        Otherwise, it will prompt the user to initialize Git and optionally make the first commit.
+        """
+        # Check if .git directory exists
+        git_dir = Path(".git")
+        
+        # Skip Git setup in CI mode
+        if self._ci_mode:
+            print_info("Running in CI mode, skipping Git setup.")
+            return
+        
+        # If .git doesn't exist, prompt to initialize Git
+        if not git_dir.exists():
+            print_header("Git Repository")
+            print("No Git repository found in this directory.")
+            response = input("Would you like to initialize a Git repository? (Y/n): ").strip().lower() or 'y'
+            
+            if response.startswith('y'):
+                try:
+                    # Initialize Git repository
+                    subprocess.run(["git", "init"], check=True)
+                    print_success("Git repository initialized.")
+                    
+                    # Track that we've initialized Git
+                    if "setup_prompted" not in self.ca_settings:
+                        self.ca_settings["setup_prompted"] = {}
+                    self.ca_settings["setup_prompted"]["git_initialized"] = True
+                    self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                    
+                    # Ask if user wants to make the first commit
+                    commit_response = input("Would you like to make the initial commit? (Y/n): ").strip().lower() or 'y'
+                    
+                    if commit_response.startswith('y'):
+                        # Add all files
+                        subprocess.run(["git", "add", "."], check=True)
+                        
+                        # Make the initial commit
+                        commit_message = input("Enter commit message (default: 'Initial commit'): ").strip() or "Initial commit"
+                        subprocess.run(["git", "commit", "-m", commit_message], check=True)
+                        print_success(f"Initial commit created with message: '{commit_message}'")
+                        
+                        # Ask if user wants to add a remote repository
+                        remote_response = input("Would you like to add a remote repository? (y/N): ").strip().lower()
+                        
+                        if remote_response.startswith('y'):
+                            remote_url = input("Enter the remote repository URL: ").strip()
+                            if remote_url:
+                                subprocess.run(["git", "remote", "add", "origin", remote_url], check=True)
+                                print_success(f"Remote repository added: {remote_url}")
+                except subprocess.CalledProcessError as e:
+                    print_error(f"Error setting up Git: {e}")
+            else:
+                print_info("Git initialization skipped.")
+        else:
+            print_info("Git repository already initialized.")
     
     def _check_gitignore_setup(self):
         """Check if .gitignore exists and create it if needed, also check if .pysetup.json should be added."""
