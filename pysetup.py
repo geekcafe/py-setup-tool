@@ -1674,9 +1674,6 @@ cython_debug/
 
 # VS Code
 #.vscode/
-
-# Local configuration
-.pysetup.json
 """
             
             # Write the default Python .gitignore file
@@ -1684,16 +1681,27 @@ cython_debug/
                 f.write(python_gitignore)
             print_success("Created default Python .gitignore file")
             
-            # Since we've already added .pysetup.json to the default .gitignore,
-            # we don't need to prompt the user about it
+            # Track that we've created a gitignore file, but don't mark pysetup.json as prompted
             if "setup_prompted" not in self.ca_settings:
                 self.ca_settings["setup_prompted"] = {}
-            self.ca_settings["setup_prompted"]["gitignore"] = True
+            self.ca_settings["setup_prompted"]["gitignore_created"] = True
             self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
-            return
         
-        # If .gitignore exists, check if user has already been prompted about adding .pysetup.json
-        if not self.ca_settings.get("setup_prompted", {}).get("gitignore", False):
+        # First check if .pysetup.json is already in the .gitignore file
+        content = gitignore_path.read_text()
+        
+        # If .pysetup.json is already in the .gitignore, mark it as prompted and skip
+        if ".pysetup.json" in content:
+            # Ensure setup_prompted structure exists
+            if "setup_prompted" not in self.ca_settings:
+                self.ca_settings["setup_prompted"] = {}
+                
+            # Mark that we've handled .pysetup.json gitignore without prompting
+            self.ca_settings["setup_prompted"]["pysetup_json_gitignore"] = True
+            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+            print_info(".pysetup.json is already in .gitignore")
+        # Otherwise, check if user has already been prompted about adding .pysetup.json to gitignore
+        elif not self.ca_settings.get("setup_prompted", {}).get("pysetup_json_gitignore", False):
             print_header("Git Configuration")
             print(".pysetup.json contains configuration that may be specific to your environment.")
             print("This can cause issues when working with other developers.")
@@ -1703,24 +1711,16 @@ cython_debug/
             if "setup_prompted" not in self.ca_settings:
                 self.ca_settings["setup_prompted"] = {}
             
-            # Mark that we've prompted the user
-            self.ca_settings["setup_prompted"]["gitignore"] = True
+            # Mark that we've prompted the user about .pysetup.json specifically
+            self.ca_settings["setup_prompted"]["pysetup_json_gitignore"] = True
             
             if response.startswith('y'):
-                # Read existing .gitignore content
-                content = gitignore_path.read_text()
-                lines = content.splitlines()
-                
-                # Check if .pysetup.json is already in .gitignore
-                if ".pysetup.json" not in lines:
-                    # Add .pysetup.json to .gitignore
-                    with open(gitignore_path, "a") as f:
-                        if not content.endswith("\n"):
-                            f.write("\n")
-                        f.write("# Local configuration\n.pysetup.json\n")
-                    print_success("Added .pysetup.json to .gitignore")
-                else:
-                    print_info(".pysetup.json is already in .gitignore")
+                # Add .pysetup.json to .gitignore
+                with open(gitignore_path, "a") as f:
+                    if not content.endswith("\n"):
+                        f.write("\n")
+                    f.write("# Local configuration\n.pysetup.json\n")
+                print_success("Added .pysetup.json to .gitignore")
             else:
                 print_info(".pysetup.json will be tracked by git")
                 
