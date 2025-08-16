@@ -1586,6 +1586,7 @@ Describe how to use your project here.
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+We welcome bug reports and feature requests.
 
 ## License
 
