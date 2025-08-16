@@ -969,6 +969,8 @@ class ProjectSetup:
             print_error(f"Google Artifact Registry login failed: {e}")
             return False
 
+    
+
     def _print_contribution_request(self):
         
         self.__exit_notes.append("Need any changes?")
@@ -987,29 +989,42 @@ class ProjectSetup:
             os_type = "debian" if os.path.exists("/etc/debian_version") else "linux"
         else:
             print_error(f"Unsupported OS: {sysname}")
-            sys.exit(1)
-
-        print(f"📟 OS: {os_type} | Architecture: {arch}")
-
+        
+        # Detect project tool from pyproject.toml or requirements.txt
         project_tool = self._detect_project_tool()
-        if project_tool == "poetry":
-            self._use_poetry = True
-            print_info("Detected Poetry project from pyproject.toml.")
-        elif project_tool == "hatch":
-            self._use_poetry = False
-            print_info("Detected Hatch project from pyproject.toml.")
-        elif project_tool == "flit":
-            self._use_poetry = False
-            print_info("Detected Flit project from pyproject.toml.")
-        elif project_tool == "pip":
-            self._use_poetry = False
-            print_info("Defaulting to pip project from requirements.txt.")
+        
+        # In CI mode, use detected package manager without prompting
+        if hasattr(self, '_ci_mode') and self._ci_mode:
+            if project_tool == "poetry":
+                self._use_poetry = True
+                print_info("CI mode: Using Poetry as detected from pyproject.toml.")
+            elif project_tool in ["hatch", "flit", "pip"]:
+                self._use_poetry = False
+                print_info(f"CI mode: Using {project_tool} as detected from project files.")
+            else:
+                # If no tool detected in CI mode, default to pip
+                self._use_poetry = False
+                print_info("CI mode: No package manager detected, defaulting to pip.")
         else:
-            pip_or_poetry = (
-                input("📦 Do you want to use pip or poetry? (default: pip): ") or "pip"
-            )
-            self._use_poetry = pip_or_poetry.lower() == "poetry"
-
+            # Interactive mode - use detected tool or prompt if none detected
+            if project_tool == "poetry":
+                self._use_poetry = True
+                print_info("Detected Poetry project from pyproject.toml.")
+            elif project_tool == "hatch":
+                self._use_poetry = False
+                print_info("Detected Hatch project from pyproject.toml.")
+            elif project_tool == "flit":
+                self._use_poetry = False
+                print_info("Detected Flit project from pyproject.toml.")
+            elif project_tool == "pip":
+                self._use_poetry = False
+                print_info("Defaulting to pip project from requirements.txt.")
+            else:
+                pip_or_poetry = (
+                    input("📦 Do you want to use pip or poetry? (default: pip): ") or "pip"
+                )
+                self._use_poetry = pip_or_poetry.lower() == "poetry"
+        
         return os_type
 
     def _detect_project_tool(self):
@@ -1213,6 +1228,11 @@ class ProjectSetup:
         Returns:
             bool: True if venv is healthy or doesn't exist, False if corrupted
         """
+        # In CI mode, skip this check since we're using 'clean' mode anyway
+        if hasattr(self, '_ci_mode') and self._ci_mode:
+            print_info("Running in CI mode, skipping virtual environment path integrity check.")
+            return True
+            
         venv_path = Path(VENV)
         if not venv_path.exists():
             return True  # No venv exists, so no corruption possible
@@ -2017,7 +2037,7 @@ break-system-packages = true
             return False
     
     def _get_setup_sh_update_preference(self, force_prompt=False) -> str:
-        """Get the user's preference for pulling the latest pysetup.sh from repository.
+        """Get the user's preference for checking for updates to pysetup.sh.
         
         Args:
             force_prompt: If True, prompt for preference even if already configured.
@@ -2034,28 +2054,33 @@ break-system-packages = true
             print_info(f"Using stored pysetup.sh update preference: {update_preference}")
             return update_preference
         
-        # Prompt for pysetup.sh update preference
-        print("\n🔄 pysetup.sh Update Preference")
-        print("=" * 45)
-        print("Choose how to handle pysetup.sh updates:")
-        print("  • yes        : Always check for the latest pysetup.sh from repository")
-        print("  • no         : Never check for updates to pysetup.sh")
-        print("  • interactive: Ask each time (default)")
-        print()
-        
-        while True:
-            response = input("pysetup.sh update preference [interactive/yes/no]: ").strip().lower()
-            if response in ('', 'interactive'):
-                update_preference = 'interactive'
-                break
-            elif response in ('yes', 'y'):
-                update_preference = 'yes'
-                break
-            elif response in ('no', 'n'):
-                update_preference = 'no'
-                break
-            else:
-                print_error("Invalid choice. Please enter 'interactive', 'yes', or 'no'.")
+        # In CI mode, default to 'no' without prompting
+        if hasattr(self, '_ci_mode') and self._ci_mode:
+            update_preference = 'no'
+            print_info("CI mode: Setting pysetup.sh update preference to 'no' (no updates)")
+        else:
+            # Prompt for pysetup.sh update preference in interactive mode
+            print("\n🔄 pysetup.sh Update Preference")
+            print("=" * 45)
+            print("Choose how to handle pysetup.sh updates:")
+            print("  • yes        : Always check for the latest pysetup.sh from repository")
+            print("  • no         : Never check for updates to pysetup.sh")
+            print("  • interactive: Ask each time (default)")
+            print()
+            
+            while True:
+                response = input("pysetup.sh update preference [interactive/yes/no]: ").strip().lower()
+                if response in ('', 'interactive'):
+                    update_preference = 'interactive'
+                    break
+                elif response in ('yes', 'y'):
+                    update_preference = 'yes'
+                    break
+                elif response in ('no', 'n'):
+                    update_preference = 'no'
+                    break
+                else:
+                    print_error("Invalid choice. Please enter 'interactive', 'yes', or 'no'.")
         
         # Save the preference
         self.ca_settings["setup_sh_update_preference"] = update_preference
@@ -2082,28 +2107,33 @@ break-system-packages = true
             print_info(f"Using stored repository update preference: {update_preference}")
             return update_preference
         
-        # Prompt for repository update preference
-        print("\n🔄 Repository Update Preference")
-        print("=" * 45)
-        print("Choose how to handle repository updates:")
-        print("  • yes        : Always pull the latest pysetup.py from repository")
-        print("  • no         : Never pull the latest pysetup.py")
-        print("  • interactive: Ask each time (default)")
-        print()
-        
-        while True:
-            response = input("Repository update preference [interactive/yes/no]: ").strip().lower()
-            if response in ('', 'interactive'):
-                update_preference = 'interactive'
-                break
-            elif response in ('yes', 'y'):
-                update_preference = 'yes'
-                break
-            elif response in ('no', 'n'):
-                update_preference = 'no'
-                break
-            else:
-                print_error("Invalid choice. Please enter 'interactive', 'yes', or 'no'.")
+        # In CI mode, default to 'no' without prompting
+        if hasattr(self, '_ci_mode') and self._ci_mode:
+            update_preference = 'no'
+            print_info("CI mode: Setting repository update preference to 'no' (no updates)")
+        else:
+            # Prompt for repository update preference in interactive mode
+            print("\n🔄 Repository Update Preference")
+            print("=" * 45)
+            print("Choose how to handle repository updates:")
+            print("  • yes        : Always pull the latest pysetup.py from repository")
+            print("  • no         : Never pull the latest pysetup.py")
+            print("  • interactive: Ask each time (default)")
+            print()
+            
+            while True:
+                response = input("Repository update preference [interactive/yes/no]: ").strip().lower()
+                if response in ('', 'interactive'):
+                    update_preference = 'interactive'
+                    break
+                elif response in ('yes', 'y'):
+                    update_preference = 'yes'
+                    break
+                elif response in ('no', 'n'):
+                    update_preference = 'no'
+                    break
+                else:
+                    print_error("Invalid choice. Please enter 'interactive', 'yes', or 'no'.")
         
         # Save the preference
         self.ca_settings["repo_update_preference"] = update_preference
@@ -2122,26 +2152,28 @@ break-system-packages = true
         Returns:
             str: The environment action preference ('clean', 'reuse', or 'upgrade')
         """
+        # In CI mode, always use 'clean' without prompting
+        if hasattr(self, '_ci_mode') and self._ci_mode:
+            print_info("Running in CI mode, using 'clean' environment action preference.")
+            return 'clean'
+            
         # Check if environment action preference is already configured
         env_preference = self.ca_settings.get("env_action_preference")
         
         if env_preference and not force_prompt:
-            # Use existing preference without prompting
-            print_info(f"Using stored environment action preference: {env_preference}")
+            print_info(f"Using existing environment action preference: {env_preference}")
             return env_preference
-        
-        # Prompt for environment action preference
-        print("\n🔧 Environment Action Preference")
-        print("=" * 45)
-        print("Choose how to handle the virtual environment:")
-        print("  • clean  : Remove and recreate the environment if it exists")
-        print("  • reuse  : Keep existing environment and only update if needed")
-        print("  • upgrade: Keep environment but upgrade all packages")
-        print()
+            
+        # Prompt for preference
+        print_header("Environment Setup")
+        print("How would you like to handle the virtual environment?")
+        print("  reuse  - Use the existing environment if it exists")
+        print("  clean  - Remove and recreate the environment")
+        print("  upgrade - Keep the environment but upgrade all packages")
         
         while True:
             response = input("Environment action preference [reuse/clean/upgrade]: ").strip().lower()
-            if response in ('', 'reuse'):
+            if response in ('reuse', ''):
                 env_preference = 'reuse'
                 break
             elif response in ('clean'):
