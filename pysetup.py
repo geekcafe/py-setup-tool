@@ -1189,6 +1189,9 @@ class ProjectSetup:
         (self._setup_poetry if self._use_poetry else self._setup_pip)()
         self.print_env_info()
         
+        # Check if README.md exists and create it if needed
+        self._check_readme_setup()
+        
         # Check if .pysetup.json should be excluded from git
         self._check_gitignore_setup()
         
@@ -1519,10 +1522,68 @@ class ProjectSetup:
         if not self._run_pip_with_progress(cmd, description):
             raise subprocess.CalledProcessError(1, cmd)
 
+    def _check_readme_setup(self):
+        """Check if README.md exists and create it if needed."""
+        # Check if README.md exists
+        readme_path = Path("README.md")
+        
+        # If README.md doesn't exist, create a default one
+        if not readme_path.exists():
+            print_header("Project Documentation")
+            print("No README.md file found. Creating a default README.md file.")
+            
+            # Get the project name from the current directory
+            project_name = Path.cwd().name
+            
+            # Create a default README.md template
+            readme_content = f"""# {project_name}
+
+## Description
+A Python project created with py-setup-tool.
+
+## Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/{project_name}.git
+cd {project_name}
+
+# Setup the environment
+./pysetup.sh
+```
+
+## Usage
+
+Describe how to use your project here.
+
+## Features
+
+- Feature 1
+- Feature 2
+- Feature 3
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+"""
+            
+            # Write the default README.md file
+            with open(readme_path, "w") as f:
+                f.write(readme_content)
+            print_success("Created default README.md file")
+            
+            # Track that we've created a README.md file
+            if "setup_prompted" not in self.ca_settings:
+                self.ca_settings["setup_prompted"] = {}
+            self.ca_settings["setup_prompted"]["readme_created"] = True
+            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+    
     def _check_gitignore_setup(self):
-        """Check if .gitignore file exists and create a default Python one if needed.
-        Also check if .pysetup.json should be added to .gitignore and prompt user if needed.
-        """
+        """Check if .gitignore exists and create it if needed, also check if .pysetup.json should be added."""
         # First, check if .gitignore exists
         gitignore_path = Path(".gitignore")
         
