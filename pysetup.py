@@ -36,6 +36,68 @@ def print_header(msg):
     print(f"\n🔎 {msg}\n{'=' * 30}")
 
 
+def _remove_directory(path, retries=3, retry_delay=0.5):
+    """Safely remove a directory with retries and fallbacks.
+    
+    Args:
+        path: Path to the directory to remove
+        retries: Number of times to retry if initial removal fails
+        retry_delay: Delay in seconds between retries
+        
+    Returns:
+        bool: True if directory was removed successfully, False otherwise
+    """
+    import shutil
+    import time
+    import os
+    import stat
+    import platform
+    
+    path = Path(path)
+    if not path.exists():
+        return True
+    
+    # First attempt: standard rmtree
+    try:
+        shutil.rmtree(path)
+        return True
+    except Exception as e:
+        print_info(f"Standard directory removal failed: {e}")
+    
+    # Second attempt: Set write permissions and retry
+    def handle_readonly(func, path, exc_info):
+        # Make the file/dir writable and try again
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    
+    for i in range(retries):
+        try:
+            print_info(f"Retrying with permission fix (attempt {i+1}/{retries})...")
+            shutil.rmtree(path, onerror=handle_readonly)
+            return True
+        except Exception as e:
+            print_info(f"Retry {i+1} failed: {e}")
+            time.sleep(retry_delay)
+    
+    # Final attempt: Use platform-specific commands
+    try:
+        print_info("Attempting platform-specific directory removal...")
+        if platform.system() == "Windows":
+            os.system(f'rd /s /q "{path}"')
+        else:  # Unix-like systems (macOS, Linux)
+            os.system(f'rm -rf "{path}"')
+        
+        # Check if directory was actually removed
+        if not path.exists():
+            return True
+    except Exception as e:
+        print_info(f"Platform-specific removal failed: {e}")
+    
+    print_error(f"Failed to remove directory: {path}")
+    print_info("Continuing anyway. You may need to manually remove the directory later.")
+    return False
+
+
 class ProjectSetup:
     CA_CONFIG = Path(".pysetup.json")
     
@@ -969,8 +1031,6 @@ class ProjectSetup:
             print_error(f"Google Artifact Registry login failed: {e}")
             return False
 
-    
-
     def _print_contribution_request(self):
         
         self.__exit_notes.append("Need any changes?")
@@ -989,7 +1049,9 @@ class ProjectSetup:
             os_type = "debian" if os.path.exists("/etc/debian_version") else "linux"
         else:
             print_error(f"Unsupported OS: {sysname}")
+            sys.exit(1)
         
+        print(f"📟 OS: {os_type} | Architecture: {arch}")
         # Detect project tool from pyproject.toml or requirements.txt
         project_tool = self._detect_project_tool()
         
@@ -1353,14 +1415,12 @@ class ProjectSetup:
         
         response = input("Would you like to remove the current virtual environment and recreate it? (Y/n): ").strip().lower()
         if response in ('', 'y', 'yes'):
-            try:
-                import shutil
-                print(f"🗑️  Removing corrupted virtual environment at {VENV}...")
-                shutil.rmtree(VENV)
+            print(f"🗑️  Removing corrupted virtual environment at {VENV}...")
+            if _remove_directory(VENV):
                 print_success(f"Removed {VENV}")
                 return True
-            except Exception as e:
-                print_error(f"Failed to remove {VENV}: {e}")
+            else:
+                print_error(f"Failed to completely remove {VENV}")
                 return False
         else:
             print("⚠️  Setup aborted. Please manually fix the virtual environment or remove it.")
@@ -2205,10 +2265,9 @@ break-system-packages = true
         try:
             # Handle environment based on preference
             if env_preference == 'clean' and Path(VENV).exists():
-                import shutil
                 print(f"🗑️  Removing existing virtual environment at {VENV}...")
-                shutil.rmtree(VENV)
-                print_success(f"Removed {VENV}")
+                if _remove_directory(VENV):
+                    print_success(f"Removed {VENV}")
                 subprocess.run(["python3", "-m", "venv", VENV], check=True)
                 self._store_python_interpreter_path()
             elif not Path(VENV).exists():
