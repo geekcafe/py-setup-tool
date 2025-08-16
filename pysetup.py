@@ -1940,6 +1940,11 @@ break-system-packages = true
         Returns:
             bool: True if pysetup.sh was updated, False otherwise
         """
+        # Skip check in CI mode
+        if hasattr(self, '_ci_mode') and self._ci_mode:
+            print_info("Running in CI mode, skipping pysetup.sh update check.")
+            return False
+            
         # Get the user's preference for updating pysetup.sh
         update_preference = self._get_setup_sh_update_preference()
         
