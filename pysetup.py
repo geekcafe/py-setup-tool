@@ -1194,6 +1194,23 @@ class ProjectSetup:
 
                 [tool.hatch.build.targets.wheel]
                 packages = ["src/{self._package_name}"]
+
+                [tool.hatch.build.targets.sdist]
+                exclude = [
+                    ".unittest/",
+                    ".venv/",
+                    "tests/",
+                    "samples/",
+                    "docs/",
+                    ".git/",
+                    ".gitignore",
+                    ".vscode/",
+                    "*.pyc",
+                    "__pycache__/",
+                    "*.egg-info/",
+                    "dist/",
+                    "build/"
+                ]
             """
             os.makedirs("tests", exist_ok=True)
 
