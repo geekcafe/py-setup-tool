@@ -315,10 +315,10 @@ class ProjectSetup:
                 "type": "codeartifact",
                 "enabled": True,
                 "tool": input("   Tool (pip/poetry) [pip]: ").strip().lower() or "pip",
-                "domain": input("   Domain: ").strip(),
-                "domain_owner": input("   Domain Owner (AWS Account ID, or press Enter if same as current account): ").strip(),
+                "domain_owner": input("   Domain Owner (AWS Account ID): ").strip(),
+                "domain": input("   Domain: ").strip(),                
                 "repository": input("   Repository Name: ").strip(),
-                "region": input("   AWS Region: ").strip() or "us-east-1",
+                "region": input("   AWS Region [us-east-1]: ").strip() or "us-east-1",
                 "profile": input("   AWS Profile (optional): ").strip() or None,
                 "trusted": True
             }
