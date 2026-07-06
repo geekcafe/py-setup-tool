@@ -37,6 +37,102 @@ def _detect_python_command() -> str:
     sys.exit(1)
 
 
+def _discover_python_versions() -> List[dict]:
+    """Discover all available Python 3.x installations on the system.
+    
+    Searches PATH for python3, python3.X binaries and returns a sorted list
+    of available versions with their paths.
+    
+    Returns:
+        List[dict]: List of dicts with 'command', 'path', and 'version' keys,
+                    sorted by version descending (newest first).
+    """
+    found_versions = {}  # version tuple -> {command, path, version_str}
+    
+    # Get all directories in PATH
+    path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+    
+    # Look for python3.X binaries
+    for dir_path in path_dirs:
+        if not os.path.isdir(dir_path):
+            continue
+        try:
+            for entry in os.listdir(dir_path):
+                # Match python3, python3.9, python3.10, etc.
+                if not re.match(r'^python3(\.\d+)?$', entry):
+                    continue
+                full_path = os.path.join(dir_path, entry)
+                if not os.path.isfile(full_path) or not os.access(full_path, os.X_OK):
+                    continue
+                    
+                # Get the actual version
+                try:
+                    result = subprocess.run(
+                        [full_path, "--version"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if result.returncode != 0:
+                        continue
+                    # Output is like "Python 3.11.5"
+                    version_match = re.match(r'Python (\d+)\.(\d+)\.(\d+)', result.stdout.strip())
+                    if not version_match:
+                        continue
+                    major = int(version_match.group(1))
+                    minor = int(version_match.group(2))
+                    patch = int(version_match.group(3))
+                    
+                    if major != 3:
+                        continue
+                        
+                    version_tuple = (major, minor, patch)
+                    version_str = f"{major}.{minor}.{patch}"
+                    
+                    # Keep the first (highest priority in PATH) for each version
+                    if (major, minor) not in found_versions:
+                        found_versions[(major, minor)] = {
+                            "command": full_path,
+                            "path": full_path,
+                            "version": version_str,
+                            "version_tuple": version_tuple,
+                        }
+                except (subprocess.TimeoutExpired, OSError):
+                    continue
+        except PermissionError:
+            continue
+    
+    # Sort by version descending (newest first)
+    sorted_versions = sorted(
+        found_versions.values(),
+        key=lambda v: v["version_tuple"],
+        reverse=True
+    )
+    
+    return sorted_versions
+
+
+def _get_python_version_from_path(python_path: str) -> str:
+    """Get the Python version string from a python executable path.
+    
+    Args:
+        python_path: Path to a python executable
+        
+    Returns:
+        str: Version string like '3.11.5' or empty string on failure
+    """
+    try:
+        result = subprocess.run(
+            [python_path, "--version"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            match = re.match(r'Python (\d+\.\d+\.\d+)', result.stdout.strip())
+            if match:
+                return match.group(1)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return ""
+
+
 def _detect_pip_command(venv_path: str = VENV) -> str:
     """Detect the available pip command inside the virtual environment.
     
@@ -489,6 +585,111 @@ class ProjectSetup:
                 return match.group(1)
         
         return ""
+
+    def _check_if_python_version_mismatch(self, package_name: str, pip_output: str) -> bool:
+        """Check if a 'package not found' error is actually a Python version mismatch.
+        
+        pip reports 'no matching distribution found' both when a package doesn't
+        exist AND when it exists but has no wheel/sdist for the current Python version.
+        This method tries to distinguish the two cases.
+        
+        Args:
+            package_name: The package that failed to install
+            pip_output: Full pip output from the failed command
+            
+        Returns:
+            bool: True if this looks like a Python version compatibility issue
+        """
+        output_lower = pip_output.lower()
+        
+        # Pattern 1: pip explicitly mentions Python version requirement
+        # e.g., "Requires-Python >=3.10" or "requires Python >=3.10"
+        if re.search(r'requires[- ]python\s*[><=!]+\s*\d+\.\d+', output_lower):
+            return True
+        
+        # Pattern 2: pip shows "requires a different python" 
+        if "requires a different python" in output_lower:
+            return True
+            
+        # Pattern 3: Check the pip output for version info hints
+        # When pip can't find a compatible version, it sometimes lists available versions
+        # with "none of the listed versions" style messages
+        if "requires python version" in output_lower:
+            return True
+            
+        # Pattern 4: Try to query PyPI for the package's python_requires metadata
+        # This is a best-effort check - if we can't reach PyPI, assume it's not a version issue
+        try:
+            venv_python = os.path.join(VENV, "bin", "python")
+            current_version = _get_python_version_from_path(venv_python)
+            if not current_version:
+                return False
+            
+            # Use pip index to check if the package exists at all
+            # If pip can find versions for newer Python but not ours, it's a version issue
+            result = subprocess.run(
+                [os.path.join(VENV, "bin", "pip"), "index", "versions", package_name],
+                capture_output=True, text=True, timeout=15
+            )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                # Package exists on the index but pip couldn't install it for our Python
+                # This strongly suggests a version compatibility issue
+                if "available versions:" in result.stdout.lower():
+                    return True
+            
+            # Fallback: try pip install --dry-run with verbose to get more info
+            result = subprocess.run(
+                [os.path.join(VENV, "bin", "pip"), "install", "--dry-run", 
+                 "--verbose", package_name],
+                capture_output=True, text=True, timeout=30
+            )
+            
+            combined_output = (result.stdout + result.stderr).lower()
+            if "requires python" in combined_output or "python_requires" in combined_output:
+                return True
+                
+        except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+            pass
+        
+        return False
+    
+    def _select_python_version_for_rebuild(self, available: List[dict], current_version: str) -> str:
+        """Prompt user to select a newer Python version for rebuilding the venv.
+        
+        Args:
+            available: List of available Python versions from _discover_python_versions()
+            current_version: The current Python version string (e.g., '3.9.7')
+            
+        Returns:
+            str: Path to the selected python executable, or empty string if cancelled
+        """
+        # Filter to only newer versions
+        newer = [v for v in available if v["version"] > current_version]
+        
+        if not newer:
+            return ""
+        
+        if len(newer) == 1:
+            print_info(f"Using Python {newer[0]['version']} ({newer[0]['path']})")
+            return newer[0]["path"]
+        
+        print("\nSelect a Python version:")
+        for i, ver in enumerate(newer):
+            marker = " (recommended)" if i == 0 else ""
+            print(f"  [{i + 1}] Python {ver['version']}{marker} - {ver['path']}")
+        
+        while True:
+            choice = input(f"Select version [1]: ").strip()
+            if choice == "" or choice == "1":
+                return newer[0]["path"]
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(newer):
+                    return newer[idx]["path"]
+                print_error(f"Please enter a number between 1 and {len(newer)}")
+            except ValueError:
+                print_error("Please enter a number")
 
     # Note: _run_with_ca_retry functionality has been merged into _run_pip_with_progress
 
@@ -1094,6 +1295,164 @@ class ProjectSetup:
         self.__exit_notes.append("👉 Please open an issue at https://github.com/geekcafe/py-setup-tool/issues/new")
         self.__exit_notes.append("👉 Or help us make it better by submitting a pull request.")
 
+    def _select_python_version(self) -> str:
+        """Prompt the user to select a Python version for the virtual environment.
+        
+        Discovers available Python versions on the system, checks for a stored
+        preference in .pysetup.json, and prompts interactively if needed.
+        
+        Returns:
+            str: Full path to the selected python executable
+        """
+        # Check for stored preference
+        stored_python = self.ca_settings.get("python_interpreter")
+        
+        if stored_python and not (hasattr(self, '_ci_mode') and self._ci_mode):
+            # Verify the stored path still exists and works
+            if os.path.isfile(stored_python) and os.access(stored_python, os.X_OK):
+                version = _get_python_version_from_path(stored_python)
+                if version:
+                    print_info(f"Using stored Python preference: {stored_python} (Python {version})")
+                    return stored_python
+                else:
+                    print_info(f"Stored Python path {stored_python} no longer works. Re-detecting...")
+            else:
+                print_info(f"Stored Python path {stored_python} not found. Re-detecting...")
+        
+        # Discover available versions
+        available = _discover_python_versions()
+        
+        if not available:
+            print_error("No Python 3.x installations found on this system.")
+            sys.exit(1)
+        
+        # CI mode: use the newest available version
+        if hasattr(self, '_ci_mode') and self._ci_mode:
+            selected = available[0]
+            print_info(f"CI mode: Using Python {selected['version']} ({selected['path']})")
+            self.ca_settings["python_interpreter"] = selected["path"]
+            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+            return selected["path"]
+        
+        # If only one version available, use it without prompting
+        if len(available) == 1:
+            selected = available[0]
+            print_info(f"Found Python {selected['version']} ({selected['path']})")
+            self.ca_settings["python_interpreter"] = selected["path"]
+            self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+            return selected["path"]
+        
+        # Multiple versions available — prompt user
+        print_header("Python Version Selection")
+        print("Multiple Python versions found on your system:\n")
+        
+        for i, ver in enumerate(available):
+            marker = " (newest)" if i == 0 else ""
+            print(f"  [{i + 1}] Python {ver['version']}{marker}")
+            print(f"      {ver['path']}")
+        
+        print()
+        
+        # Check if pyproject.toml specifies a minimum version
+        min_version = self._get_requires_python_from_pyproject()
+        if min_version:
+            print(f"  ℹ️  Your pyproject.toml requires Python {min_version}")
+            print()
+        
+        while True:
+            choice = input(f"Select Python version [1] (default: newest): ").strip()
+            
+            if choice == "" or choice == "1":
+                selected = available[0]
+                break
+            
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(available):
+                    selected = available[idx]
+                    break
+                else:
+                    print_error(f"Please enter a number between 1 and {len(available)}")
+            except ValueError:
+                # Allow typing version directly like "3.11"
+                for ver in available:
+                    if choice in ver["version"]:
+                        selected = ver
+                        break
+                else:
+                    print_error(f"No matching version found for '{choice}'. Please enter a number or version like 3.11")
+                    continue
+                break
+        
+        print_success(f"Selected Python {selected['version']}")
+        
+        # Store the preference
+        self.ca_settings["python_interpreter"] = selected["path"]
+        self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+        
+        return selected["path"]
+    
+    def _get_requires_python_from_pyproject(self) -> str:
+        """Extract the requires-python value from pyproject.toml if it exists.
+        
+        Returns:
+            str: The requires-python constraint (e.g., '>=3.10') or empty string
+        """
+        pyproject_path = Path("pyproject.toml")
+        if not pyproject_path.exists():
+            return ""
+        
+        try:
+            with open(pyproject_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            
+            # Look for requires-python in [project] section
+            match = re.search(r'requires-python\s*=\s*"([^"]*)"', content)
+            if match:
+                return match.group(1)
+        except Exception:
+            pass
+        
+        return ""
+    
+    def _check_python_version_compatibility(self, python_path: str) -> List[str]:
+        """Check if the selected Python version meets project requirements.
+        
+        Args:
+            python_path: Path to the python executable
+            
+        Returns:
+            List[str]: List of warning messages (empty if compatible)
+        """
+        warnings = []
+        version_str = _get_python_version_from_path(python_path)
+        if not version_str:
+            return warnings
+        
+        version_parts = version_str.split(".")
+        if len(version_parts) < 2:
+            return warnings
+        
+        major, minor = int(version_parts[0]), int(version_parts[1])
+        
+        # Check pyproject.toml requires-python
+        requires_python = self._get_requires_python_from_pyproject()
+        if requires_python:
+            # Parse common patterns like >=3.10, >=3.9, ^3.8
+            req_match = re.search(r'(\d+)\.(\d+)', requires_python)
+            if req_match:
+                req_major = int(req_match.group(1))
+                req_minor = int(req_match.group(2))
+                
+                if (major, minor) < (req_major, req_minor):
+                    warnings.append(
+                        f"⚠️  Your project requires Python {requires_python}, "
+                        f"but you selected Python {major}.{minor}. "
+                        f"Some packages may fail to install."
+                    )
+        
+        return warnings
+
     def _detect_platform(self):
         sysname = os.uname().sysname
         arch = os.uname().machine
@@ -1613,31 +1972,90 @@ class ProjectSetup:
             if return_code != 0 and self._output_has_package_not_found(full_output):
                 package_name = self._extract_package_name_from_error(full_output)
                 if package_name:
-                    print_error(f"Package not found: {package_name}")
-                    print_info("This appears to be a missing package error, not an authentication issue.")
-                    print_info("Check that the package name is correct and available in the configured repositories.")
+                    # Check if this might be a Python version mismatch
+                    is_version_issue = self._check_if_python_version_mismatch(package_name, full_output)
                     
-                    # Ask if user wants to configure additional repositories
-                    setup_repos = input("Would you like to configure additional package repositories? (y/N): ").strip().lower()
-                    if setup_repos == "y":
-                        self._setup_repositories(force_prompt=True)
-                        print_info(f"Retrying installation of {package_name}...")
-                        # Retry the command after setting up repositories
-                        retry_result = execute_pip_command()
-                        return_code = retry_result["return_code"]
-                        packages_installed = retry_result["packages_installed"]
-                        full_output = retry_result["full_output"]
+                    if is_version_issue:
+                        # Python version mismatch detected — provide clear guidance
+                        venv_python = os.path.join(VENV, "bin", "python")
+                        current_version = _get_python_version_from_path(venv_python) or "unknown"
                         
-                        # Process the retry result
-                        if return_code == 0:
-                            if packages_installed:
-                                package_list = ", ".join(packages_installed[:3])
-                                if len(packages_installed) > 3:
-                                    package_list += f" and {len(packages_installed) - 3} more"
-                                print_success(f"Successfully installed {package_list} after repository setup")
-                                return True
-                        else:
-                            print_error(f"Package {package_name} still not found after repository setup")
+                        print_error(f"Package '{package_name}' requires a newer Python version than {current_version}")
+                        print_info("This is a Python version compatibility issue, NOT a missing package.")
+                        print_info(f"The package exists but doesn't support Python {current_version}.")
+                        print()
+                        
+                        # Show available versions that might work
+                        available = _discover_python_versions()
+                        if available:
+                            newer = [v for v in available if v["version"] > current_version]
+                            if newer:
+                                print_info("Available Python versions that may be compatible:")
+                                for v in newer:
+                                    print(f"      • Python {v['version']} ({v['path']})")
+                                print()
+                                
+                                rebuild = input("Would you like to rebuild the venv with a newer Python? (Y/n): ").strip().lower() or "y"
+                                if rebuild.startswith('y'):
+                                    # Let user pick a new version
+                                    new_python = self._select_python_version_for_rebuild(available, current_version)
+                                    if new_python:
+                                        print(f"🗑️  Removing virtual environment at {VENV}...")
+                                        if _remove_directory(VENV):
+                                            print_success(f"Removed {VENV}")
+                                        print(f"🐍 Recreating venv with {new_python}...")
+                                        subprocess.run([new_python, "-m", "venv", VENV], check=True)
+                                        self._store_python_interpreter_path()
+                                        # Update stored preference
+                                        self.ca_settings["python_interpreter"] = new_python
+                                        self.CA_CONFIG.write_text(json.dumps(self.ca_settings, indent=2))
+                                        print_success(f"Venv recreated with Python {_get_python_version_from_path(new_python)}")
+                                        print_info("Retrying package installation...")
+                                        # Retry the command
+                                        retry_result = execute_pip_command()
+                                        return_code = retry_result["return_code"]
+                                        packages_installed = retry_result["packages_installed"]
+                                        full_output = retry_result["full_output"]
+                                        if return_code == 0:
+                                            if packages_installed:
+                                                package_list = ", ".join(packages_installed[:3])
+                                                if len(packages_installed) > 3:
+                                                    package_list += f" and {len(packages_installed) - 3} more"
+                                                print_success(f"Successfully installed {package_list} after Python upgrade")
+                                            return True
+                                        else:
+                                            print_error(f"Installation still failed after Python upgrade")
+                            else:
+                                print_info("No newer Python versions found on this system.")
+                                print_info("You may need to install a newer Python version.")
+                                print_info("  macOS:  brew install python@3.12")
+                                print_info("  Ubuntu: sudo apt install python3.12 python3.12-venv")
+                    else:
+                        print_error(f"Package not found: {package_name}")
+                        print_info("This appears to be a missing package error, not an authentication issue.")
+                        print_info("Check that the package name is correct and available in the configured repositories.")
+                    
+                        # Ask if user wants to configure additional repositories
+                        setup_repos = input("Would you like to configure additional package repositories? (y/N): ").strip().lower()
+                        if setup_repos == "y":
+                            self._setup_repositories(force_prompt=True)
+                            print_info(f"Retrying installation of {package_name}...")
+                            # Retry the command after setting up repositories
+                            retry_result = execute_pip_command()
+                            return_code = retry_result["return_code"]
+                            packages_installed = retry_result["packages_installed"]
+                            full_output = retry_result["full_output"]
+                            
+                            # Process the retry result
+                            if return_code == 0:
+                                if packages_installed:
+                                    package_list = ", ".join(packages_installed[:3])
+                                    if len(packages_installed) > 3:
+                                        package_list += f" and {len(packages_installed) - 3} more"
+                                    print_success(f"Successfully installed {package_list} after repository setup")
+                                    return True
+                            else:
+                                print_error(f"Package {package_name} still not found after repository setup")
                 else:
                     print_error("Package not found error detected.")
                     print_info("You may need to configure additional package repositories.")
@@ -2390,26 +2808,57 @@ break-system-packages = true
         # Get environment action preference
         env_preference = self._get_env_action_preference()
         
+        # Select Python version for the venv
+        python_path = self._select_python_version()
+        python_version = _get_python_version_from_path(python_path)
+        
+        # Check compatibility warnings
+        compat_warnings = self._check_python_version_compatibility(python_path)
+        for warning in compat_warnings:
+            print(f"\n{warning}")
+            response = input("Continue anyway? (y/N): ").strip().lower()
+            if response not in ('y', 'yes'):
+                print_info("Setup aborted. Please select a compatible Python version.")
+                sys.exit(1)
+        
         # Check for virtual environment path integrity issues
         if not self._check_venv_path_integrity():
             if not self._handle_corrupted_venv():
                 sys.exit(1)
 
-        print(f"🐍 Setting up Python virtual environment at {VENV}...")
+        print(f"🐍 Setting up Python {python_version} virtual environment at {VENV}...")
         try:
             # Handle environment based on preference
             if env_preference == 'clean' and Path(VENV).exists():
                 print(f"🗑️  Removing existing virtual environment at {VENV}...")
                 if _remove_directory(VENV):
                     print_success(f"Removed {VENV}")
-                subprocess.run(["python3", "-m", "venv", VENV], check=True)
+                subprocess.run([python_path, "-m", "venv", VENV], check=True)
                 self._store_python_interpreter_path()
             elif not Path(VENV).exists():
-                subprocess.run(["python3", "-m", "venv", VENV], check=True)
+                subprocess.run([python_path, "-m", "venv", VENV], check=True)
                 # After creating the venv, detect and store the actual Python path
                 self._store_python_interpreter_path()
             else:
-                print_info(f"Virtual environment {VENV} already exists")
+                # Verify existing venv matches selected version
+                venv_python = os.path.join(VENV, "bin", "python")
+                if os.path.isfile(venv_python):
+                    venv_version = _get_python_version_from_path(venv_python)
+                    if venv_version and python_version and venv_version.rsplit('.', 1)[0] != python_version.rsplit('.', 1)[0]:
+                        print_info(f"Existing venv uses Python {venv_version}, but you selected {python_version}.")
+                        rebuild = input("Rebuild the venv with the selected version? (Y/n): ").strip().lower() or "y"
+                        if rebuild.startswith('y'):
+                            print(f"🗑️  Removing existing virtual environment at {VENV}...")
+                            if _remove_directory(VENV):
+                                print_success(f"Removed {VENV}")
+                            subprocess.run([python_path, "-m", "venv", VENV], check=True)
+                            self._store_python_interpreter_path()
+                        else:
+                            print_info(f"Keeping existing venv with Python {venv_version}")
+                    else:
+                        print_info(f"Virtual environment {VENV} already exists (Python {venv_version})")
+                else:
+                    print_info(f"Virtual environment {VENV} already exists")
             
             # Configure package repositories before installing packages
             self._setup_repositories()
