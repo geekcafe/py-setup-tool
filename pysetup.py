@@ -2090,6 +2090,14 @@ class ProjectSetup:
                 return True
             else:
                 print_error(f"Command failed with return code {return_code}")
+                # Show the last few lines of output to help diagnose the issue
+                if full_output:
+                    output_lines = full_output.strip().splitlines()
+                    # Show last 15 lines of output for context
+                    relevant_lines = output_lines[-15:]
+                    print_info("Last lines of output:")
+                    for line in relevant_lines:
+                        print(f"      {line}")
                 return False
                 
         except Exception as e:
@@ -2888,10 +2896,19 @@ break-system-packages = true
                 )
 
             # Install local package in editable mode with progress indication
-            self._run_pip_command_with_progress(
-                ["install", "-e", "."] + (["--upgrade"] if env_preference == "upgrade" else []),
-                f"Installing local package in editable mode{' (with upgrade)' if env_preference == 'upgrade' else ''}"
-            )
+            # This is non-fatal — the venv and dependencies are already set up
+            try:
+                self._run_pip_command_with_progress(
+                    ["install", "-e", "."] + (["--upgrade"] if env_preference == "upgrade" else []),
+                    f"Installing local package in editable mode{' (with upgrade)' if env_preference == 'upgrade' else ''}"
+                )
+            except subprocess.CalledProcessError:
+                print_info("⚠️  Editable install failed. Your venv and dependencies are still set up.")
+                print_info("   Common causes:")
+                print_info("   • Missing src/<package_name>/__init__.py")
+                print_info("   • A dependency in [project.dependencies] couldn't be resolved")
+                print_info("   • Build backend (hatchling/setuptools) configuration issue")
+                print_info("   You can retry manually with: .venv/bin/pip install -e .")
 
         except subprocess.CalledProcessError as e:
             print_error(f"pip setup failed: {e}")
