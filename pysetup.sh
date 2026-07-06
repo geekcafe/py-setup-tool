@@ -68,10 +68,31 @@ if [[ "$FETCH_LATEST" == "yes" ]]; then
     -o pysetup.py
 fi
 
+# --- detect python command ---
+if command -v python3 &>/dev/null; then
+  PYTHON_CMD="python3"
+elif command -v python &>/dev/null; then
+  PYTHON_CMD="python"
+else
+  echo "❌ Neither python3 nor python found. Please install Python 3."
+  exit 1
+fi
+
+# --- detect pip command (for any direct pip usage) ---
+if command -v pip3 &>/dev/null; then
+  PIP_CMD="pip3"
+elif command -v pip &>/dev/null; then
+  PIP_CMD="pip"
+else
+  # pip might not be needed directly, but warn
+  PIP_CMD=""
+  echo "⚠️  Neither pip nor pip3 found in PATH (will use venv pip after setup)."
+fi
+
 # --- run the Python installer ---
 if [[ "$CI_MODE" == "yes" ]]; then
   echo "🤖 Running in CI/CD mode..."
-  python3 pysetup.py --ci
+  $PYTHON_CMD pysetup.py --ci
 else
-  python3 pysetup.py
+  $PYTHON_CMD pysetup.py
 fi

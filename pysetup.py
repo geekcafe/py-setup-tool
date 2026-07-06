@@ -14,6 +14,63 @@ import re
 
 VENV = ".venv"
 
+
+def _detect_python_command() -> str:
+    """Detect the available python command (python3 or python).
+    
+    Returns:
+        str: The python command to use ('python3' or 'python')
+    """
+    if which("python3"):
+        return "python3"
+    elif which("python"):
+        # Verify it's Python 3
+        try:
+            result = subprocess.run(
+                ["python", "--version"], capture_output=True, text=True
+            )
+            if result.returncode == 0 and "Python 3" in result.stdout:
+                return "python"
+        except Exception:
+            pass
+    print_error("Neither python3 nor python (3.x) found. Please install Python 3.")
+    sys.exit(1)
+
+
+def _detect_pip_command(venv_path: str = VENV) -> str:
+    """Detect the available pip command inside the virtual environment.
+    
+    Checks for pip, pip3 inside the venv bin directory. Falls back to
+    'python -m pip' if neither is found as a standalone binary.
+    
+    Args:
+        venv_path: Path to the virtual environment
+        
+    Returns:
+        str: The full path to the pip executable or a python -m pip fallback
+    """
+    bin_dir = os.path.join(venv_path, "bin")
+    
+    # Check for pip in the venv
+    pip_path = os.path.join(bin_dir, "pip")
+    pip3_path = os.path.join(bin_dir, "pip3")
+    
+    if os.path.isfile(pip_path) and os.access(pip_path, os.X_OK):
+        return pip_path
+    elif os.path.isfile(pip3_path) and os.access(pip3_path, os.X_OK):
+        return pip3_path
+    else:
+        # Fallback: use python -m pip from the venv
+        python_path = os.path.join(bin_dir, "python")
+        python3_path = os.path.join(bin_dir, "python3")
+        if os.path.isfile(python3_path):
+            return f"{python3_path} -m pip"
+        elif os.path.isfile(python_path):
+            return f"{python_path} -m pip"
+        else:
+            print_error(f"No pip or python found in {bin_dir}")
+            sys.exit(1)
+
 # ANSI escape codes for colored output
 RED = "\033[91m"
 GREEN = "\033[92m"
