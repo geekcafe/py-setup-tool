@@ -92,7 +92,16 @@ fi
 # --- run the Python installer ---
 if [[ "$CI_MODE" == "yes" ]]; then
   echo "🤖 Running in CI/CD mode..."
-  $PYTHON_CMD pysetup.py --ci
+  $PYTHON_CMD pysetup.py --ci || EXIT_CODE=$?
 else
-  $PYTHON_CMD pysetup.py
+  $PYTHON_CMD pysetup.py || EXIT_CODE=$?
 fi
+
+EXIT_CODE=${EXIT_CODE:-0}
+
+# Exit code 42 means pysetup.sh was updated and the user needs to restart
+if [ $EXIT_CODE -eq 42 ]; then
+  exit 0
+fi
+
+exit $EXIT_CODE

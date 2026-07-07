@@ -1694,8 +1694,9 @@ class ProjectSetup:
         
         # Check for and fetch the latest pysetup.sh first
         if self._check_and_fetch_setup_sh(force_update=force_update_sh):
-            # If pysetup.sh was updated, exit and instruct the user to restart
-            sys.exit(0)
+            # If pysetup.sh was updated, exit with code 42 to signal the shell script to stop
+            # Using a special exit code so pysetup.sh knows not to continue execution
+            sys.exit(42)
             
         self._detect_platform()
         self._create_pyproject_toml()
